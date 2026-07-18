@@ -1,0 +1,487 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   polygraph_engine.js — physiological reactivity analysis engine
+   ───────────────────────────────────────────────────────────────────────────
+   Runs in the phone's browser (and in Node for tests). The ESP32 only samples
+   two channels and streams them; ALL analysis happens here.
+
+   Inputs  : a stream of { t_ms, gsr, ir } samples (GSR = electrodermal ADC,
+             IR = MAX3010x infrared PPG count), nominally ~100 Hz.
+   Output  : per-response determinations, scored against the SUBJECT'S OWN
+             baseline (resting period + calibration questions).
+
+   What this actually measures — stated honestly: sympathetic AROUSAL /
+   physiological reactivity relative to the subject's own neutral baseline.
+   Elevated arousal is what a polygraph detects; it is NOT a direct lie
+   readout. Labels (Truthful/Deceptive/Inconclusive) are a bounded mapping of
+   a reactivity index, surfaced with an explicit confidence.
+
+   Concepts kept from the old Python: within-subject z-scoring vs baseline;
+   sign-inverted channels (some physiology DROPS with arousal); weighted
+   multi-channel fusion; refuse to over-claim when signal quality is poor.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+'use strict';
+
+/* ─── Small DSP primitives ──────────────────────────────────────────────── */
+
+// RBJ cookbook biquad. Stateful, single-sample process().
+class Biquad {
+  constructor(b0, b1, b2, a1, a2) {
+    this.b0 = b0; this.b1 = b1; this.b2 = b2; this.a1 = a1; this.a2 = a2;
+    this.z1 = 0; this.z2 = 0;
+  }
+  reset() { this.z1 = 0; this.z2 = 0; }
+  process(x) {
+    // Transposed Direct Form II
+    const y = this.b0 * x + this.z1;
+    this.z1 = this.b1 * x - this.a1 * y + this.z2;
+    this.z2 = this.b2 * x - this.a2 * y;
+    return y;
+  }
+  static lowpass(fs, f0, Q = Math.SQRT1_2) {
+    const w = 2 * Math.PI * f0 / fs, c = Math.cos(w), s = Math.sin(w);
+    const alpha = s / (2 * Q);
+    const a0 = 1 + alpha;
+    const b0 = (1 - c) / 2 / a0, b1 = (1 - c) / a0, b2 = b0;
+    const a1 = -2 * c / a0, a2 = (1 - alpha) / a0;
+    return new Biquad(b0, b1, b2, a1, a2);
+  }
+  static highpass(fs, f0, Q = Math.SQRT1_2) {
+    const w = 2 * Math.PI * f0 / fs, c = Math.cos(w), s = Math.sin(w);
+    const alpha = s / (2 * Q);
+    const a0 = 1 + alpha;
+    const b0 = (1 + c) / 2 / a0, b1 = -(1 + c) / a0, b2 = b0;
+    const a1 = -2 * c / a0, a2 = (1 - alpha) / a0;
+    return new Biquad(b0, b1, b2, a1, a2);
+  }
+}
+
+// Cascade of biquads → one filter chain.
+class FilterChain {
+  constructor(stages) { this.stages = stages; }
+  reset() { this.stages.forEach(s => s.reset()); }
+  process(x) { let y = x; for (const s of this.stages) y = s.process(x = y); return y; }
+}
+
+function mean(a) { return a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0; }
+function std(a) {
+  if (a.length < 2) return 0;
+  const m = mean(a);
+  return Math.sqrt(a.reduce((s, v) => s + (v - m) * (v - m), 0) / (a.length - 1));
+}
+function clamp(v, lo, hi) { return Math.min(Math.max(v, lo), hi); }
+function median(a) {
+  if (!a.length) return NaN;
+  const s = a.slice().sort((x, y) => x - y), h = s.length >> 1;
+  return s.length % 2 ? s[h] : (s[h - 1] + s[h]) / 2;
+}
+// Remove a least-squares line — kills slow drift/tonic slope without needing a
+// filter to warm up, which a 0.05 Hz low-pass can't do inside a 6 s window.
+function detrend(v) {
+  const n = v.length;
+  if (n < 2) return v.slice();
+  let sx = 0, sy = 0, sxx = 0, sxy = 0;
+  for (let i = 0; i < n; i++) { sx += i; sy += v[i]; sxx += i * i; sxy += i * v[i]; }
+  const denom = n * sxx - sx * sx || 1;
+  const b = (n * sxy - sx * sy) / denom, a = (sy - b * sx) / n;
+  return v.map((x, i) => x - (a + b * i));
+}
+
+// Welford online mean/variance — one per baseline feature.
+class Welford {
+  constructor() { this.n = 0; this.mean = 0; this.m2 = 0; }
+  push(x) {
+    if (!Number.isFinite(x)) return;
+    this.n++;
+    const d = x - this.mean;
+    this.mean += d / this.n;
+    this.m2 += d * (x - this.mean);
+  }
+  get std() { return this.n > 1 ? Math.sqrt(this.m2 / (this.n - 1)) : 0; }
+}
+
+/* ─── Configuration ─────────────────────────────────────────────────────── */
+
+export const DEFAULT_CONFIG = {
+  fs: 100,                 // nominal sample rate (Hz); engine re-derives from timestamps
+  windowSec: 6,            // response window length analysed per capture
+  contextSec: 8,           // pre-window context used for "delta vs immediately-before" features
+  baselineStrideSec: 2,    // how far the sliding baseline window advances
+  bufferSec: 45,           // ring buffer depth
+
+  // GSR polarity: +1 if higher ADC == higher skin conductance == more arousal.
+  // Flip to -1 for front-ends whose voltage rises as skin resistance rises.
+  gsrPolarity: +1,
+
+  // PPG cardiac band and beat detection.
+  ppgBandHz: [0.6, 3.6],
+  beatRefractoryMs: 300,   // ⇒ max ~200 bpm
+  beatThreshK: 0.35,       // fraction of recent peak height for adaptive threshold
+
+  // EDA tonic/phasic split.
+  edaTonicHz: 0.05,        // < this = tonic (SCL)
+  scrThreshZ: 3.0,         // scrCount: MAD multiples above noise to count an SCR
+  scrMinIntervalMs: 900,
+
+  // Floor the baseline std at this fraction of |mean| before z-scoring. Without
+  // it, a subject who is very steady during baseline gets a near-zero std, and
+  // then a trivial absolute drift (0.5 bpm, a few ADC counts) explodes into a
+  // huge z. This is the "smallest change we'll treat as meaningful", unit-free.
+  zStdFloorCV: 0.05,
+
+  // Decision bands on the fused reactivity index R ∈ [0,1], where R≈0.5 means
+  // "physiology matched baseline". Below truthfulBelow = no significant
+  // reaction (Truthful); at/above deceptiveAbove = clear elevated reaction
+  // (Deceptive); the gap between them, or poor signal, = Inconclusive.
+  truthfulBelow: 0.55,
+  deceptiveAbove: 0.63,
+
+  // Corroboration: a Deceptive verdict needs BOTH sensor modalities elevated —
+  // an EDA channel (scrAmp/scl, from the GSR) AND a cardiac channel (hr/pulseAmp,
+  // from the PPG). Two features from the SAME sensor spiking together is one
+  // artifact, not converging evidence; genuine arousal shows up in independent
+  // systems at once. A channel counts as elevated at z ≥ elevatedZ.
+  elevatedZ: 1.8,
+
+  // Minimum signal quality (0..1) to return anything but Inconclusive.
+  minSQI: 0.45,
+};
+
+/* ─── Feature extraction over an arbitrary sample slice ─────────────────────
+   A slice is { t:[ms], gsr:[], ir:[] } already trimmed to the region of
+   interest. Everything downstream z-scores these features, so absolute units
+   are irrelevant — only within-subject consistency matters. ──────────────── */
+
+function resampleUniform(t, v, fs) {
+  // Timestamps can jitter; resample to a uniform grid for filtering/FFT-free DSP.
+  if (t.length < 2) return { v: v.slice(), fs };
+  const t0 = t[0], t1 = t[t.length - 1];
+  const n = Math.max(2, Math.round((t1 - t0) / 1000 * fs));
+  const out = new Array(n);
+  let j = 0;
+  for (let i = 0; i < n; i++) {
+    const tt = t0 + (i / (n - 1)) * (t1 - t0);
+    while (j < t.length - 2 && t[j + 1] < tt) j++;
+    const span = t[j + 1] - t[j] || 1;
+    const frac = clamp((tt - t[j]) / span, 0, 1);
+    out[i] = v[j] + (v[j + 1] - v[j]) * frac;
+  }
+  return { v: out, fs };
+}
+
+// Detect systolic peaks on a band-passed PPG; return {ibis:[ms], amps:[]}.
+function detectBeats(sig, fs, cfg) {
+  const n = sig.length;
+  const refr = Math.round(cfg.beatRefractoryMs / 1000 * fs);
+  const peaks = [];
+  // Adaptive threshold that decays toward recent peak amplitude.
+  let thresh = 0, decay = Math.exp(-1 / (fs * 0.6));
+  let lastPeak = -refr;
+  for (let i = 1; i < n - 1; i++) {
+    thresh *= decay;
+    if (sig[i] > sig[i - 1] && sig[i] >= sig[i + 1] && sig[i] > thresh && (i - lastPeak) >= refr) {
+      peaks.push(i);
+      lastPeak = i;
+      thresh = sig[i] * cfg.beatThreshK;
+    }
+  }
+  const ibis = [];
+  for (let k = 1; k < peaks.length; k++) ibis.push((peaks[k] - peaks[k - 1]) / fs * 1000);
+  // Beat amplitude = peak minus preceding local trough.
+  const amps = [];
+  for (const p of peaks) {
+    let tr = sig[p];
+    for (let i = p; i >= Math.max(0, p - refr); i--) tr = Math.min(tr, sig[i]);
+    amps.push(sig[p] - tr);
+  }
+  return { peaks, ibis, amps };
+}
+
+// Keep only physiologically plausible inter-beat intervals.
+function plausibleIBIs(ibis) { return ibis.filter(x => x >= 300 && x <= 1500); }
+
+// Signal-quality index for a PPG slice: rewards a plausible, regular pulse.
+function ppgSQI(ibis) {
+  const v = plausibleIBIs(ibis);
+  if (v.length < 3) return 0;
+  const m = median(v), s = std(v);
+  if (m < 300 || m > 1500) return 0.1;           // implausible HR
+  const cv = s / m;                              // beat-to-beat regularity
+  return clamp(1 - cv * 2.2, 0, 1);
+}
+
+function extractFeatures(slice, cfg) {
+  const fs = cfg.fs;
+  const irU = resampleUniform(slice.t, slice.ir, fs).v;
+  const gsrU = resampleUniform(slice.t, slice.gsr, fs).v;
+
+  // ── PPG: mean-centre (cheap DC removal so the high-pass barely rings) →
+  //    band-pass → beats → HR / HRV / pulse amplitude ──
+  const mIr = mean(irU);
+  const bp = new FilterChain([
+    Biquad.highpass(fs, cfg.ppgBandHz[0]),
+    Biquad.lowpass(fs, cfg.ppgBandHz[1]),
+  ]);
+  const ppg = irU.map(x => bp.process(x - mIr));
+  const beats = detectBeats(ppg, fs, cfg);
+  const ibis = plausibleIBIs(beats.ibis);
+  const hr = ibis.length ? 60000 / median(ibis) : NaN;
+  // RMSSD (HRV): root-mean-square of successive IBI differences.
+  let rmssd = NaN;
+  if (ibis.length >= 3) {
+    let acc = 0; for (let k = 1; k < ibis.length; k++) { const d = ibis[k] - ibis[k - 1]; acc += d * d; }
+    rmssd = Math.sqrt(acc / (ibis.length - 1));
+  }
+  const pulseAmp = beats.amps.length ? median(beats.amps) : NaN;
+  const sqi = ppgSQI(beats.ibis);
+
+  // ── EDA ──. Work in polarity-adjusted units so "up = more arousal".
+  const g = gsrU.map(x => x * cfg.gsrPolarity);
+  const scl = mean(g);                    // tonic level
+  const gsrMax = g.length ? Math.max(...g) : NaN;
+  const gsrBase = median(g);              // window's own resting level
+  // Phasic noise scale (MAD of the fast component). Robust to an SCR being
+  // present, and — because it's the noise floor, not the SCR — never clips it.
+  const smoothLP = Biquad.lowpass(fs, 1.5);
+  const phasic = detrend(g).map(x => smoothLP.process(x));
+  const pmed = median(phasic);
+  const gsrNoise = (1.4826 * median(phasic.map(x => Math.abs(x - pmed)))) || 1e-6;
+
+  // scrCount (display only): phasic peaks well above the noise floor.
+  const scrThresh = pmed + cfg.scrThreshZ * gsrNoise;
+  const minGap = Math.round(cfg.scrMinIntervalMs / 1000 * fs);
+  let scrCount = 0, lastScr = -minGap;
+  for (let i = 1; i < phasic.length - 1; i++) {
+    if (phasic[i] > phasic[i - 1] && phasic[i] >= phasic[i + 1] &&
+        phasic[i] > scrThresh && (i - lastScr) >= minGap) {
+      scrCount++; lastScr = i;
+    }
+  }
+
+  // scrAmp (window-only fallback SNR; the scored version references pre-context).
+  const scrAmp = Math.max(0, gsrMax - gsrBase) / gsrNoise;
+
+  return { hr, rmssd, pulseAmp, scl, scrAmp, scrCount, sqi, gsrMax, gsrBase, gsrNoise };
+}
+
+/* ─── Baseline model ────────────────────────────────────────────────────────
+   Per-feature running mean/std built from many baseline windows. Response
+   features are z-scored against these. ──────────────────────────────────── */
+
+const FEATURES = ['hr', 'rmssd', 'pulseAmp', 'scl', 'scrAmp', 'scrCount'];
+
+class BaselineModel {
+  constructor(cvFloor = DEFAULT_CONFIG.zStdFloorCV) {
+    this.acc = {}; FEATURES.forEach(f => this.acc[f] = new Welford());
+    this.windows = 0; this.cvFloor = cvFloor;
+  }
+  addWindow(feat) {
+    this.windows++;
+    for (const f of FEATURES) if (Number.isFinite(feat[f])) this.acc[f].push(feat[f]);
+  }
+  ready() { return this.windows >= 8; }         // enough windows for a usable distribution
+  z(feature, value) {
+    const w = this.acc[feature];
+    if (!Number.isFinite(value) || w.n < 3) return 0;
+    const s = Math.max(w.std, this.cvFloor * Math.abs(w.mean), 1e-9);
+    return (value - w.mean) / s;
+  }
+  summary() {
+    const o = { windows: this.windows };
+    for (const f of FEATURES) o[f] = { mean: +this.acc[f].mean.toFixed(3), std: +this.acc[f].std.toFixed(3), n: this.acc[f].n };
+    return o;
+  }
+}
+
+/* ─── Scoring ───────────────────────────────────────────────────────────────
+   Fuse z-scored channels into a single reactivity index R ∈ [0,1]. Channels
+   whose value DROPS with arousal are sign-flipped so "+z" always means "more
+   aroused". ──────────────────────────────────────────────────────────────── */
+
+// Two features are computed and surfaced for display but intentionally NOT
+// scored, because neither is trustworthy at a ~6 s capture window:
+//   • scrCount — its threshold is relative to each window's own noise, so a
+//     calm window of pure ADC noise still manufactures a few "SCRs";
+//   • rmssd (HRV) — needs 30–60 s of beats to be stable, so its delta over 6 s
+//     swings wildly and would dominate the fusion with noise.
+// The four scored channels below are all robust over a short window and cover
+// the core polygraph picture: EDA-phasic, EDA-tonic, cardiac rate, vascular tone.
+const CHANNEL_WEIGHTS = {
+  scrAmp:   1.0,   // phasic EDA response — the strongest arousal signal
+  scl:      0.8,   // tonic EDA level rising
+  hr:       0.9,   // heart-rate elevation
+  pulseAmp: 0.6,   // vasoconstriction shrinks pulse  → inverted
+};
+const INVERTED = new Set(['pulseAmp']);
+
+// Independent sensor modalities, for cross-modality corroboration.
+const EDA_CHANNELS = ['scrAmp', 'scl'];       // from the GSR electrodes
+const CARDIAC_CHANNELS = ['hr', 'pulseAmp'];  // from the PPG
+
+function scoreResponseFeatures(feat, baseline, cfg) {
+  const perChannel = {};
+  let wsum = 0, zsum = 0, nValid = 0;
+
+  let nElevated = 0;
+  for (const [ch, weight] of Object.entries(CHANNEL_WEIGHTS)) {
+    let z = baseline.z(ch, feat[ch]);
+    if (!Number.isFinite(z)) continue;
+    if (INVERTED.has(ch)) z = -z;
+    const zc = clamp(z, -3, 3);
+    perChannel[ch] = { value: +(+feat[ch]).toFixed(3), z: +zc.toFixed(2) };
+    zsum += zc * weight; wsum += weight; nValid++;
+    if (zc >= cfg.elevatedZ) nElevated++;   // reported for info; see cross-modality gate below
+  }
+
+  // Mean weighted z, mapped through a logistic to R ∈ [0,1].
+  // z≈0 → 0.5 (matches own baseline); z≈+2 → ~0.85; z≈−2 → ~0.15.
+  const meanZ = wsum > 0 ? zsum / wsum : 0;
+  const reactivity = 1 / (1 + Math.exp(-1.1 * meanZ));
+
+  // Confidence: PPG signal quality × channel coverage × distance from the
+  // undecided band. Poor signal or a borderline value → low confidence.
+  const coverage = nValid / Object.keys(CHANNEL_WEIGHTS).length;
+  const margin = Math.min(
+    Math.abs(reactivity - cfg.truthfulBelow),
+    Math.abs(reactivity - cfg.deceptiveAbove),
+  );
+  const confidence = clamp(feat.sqi * 0.5 + coverage * 0.3 + Math.min(margin * 3, 1) * 0.2, 0, 1);
+
+  // Cross-modality corroboration: need at least one EDA channel AND one cardiac
+  // channel clearly elevated — independent evidence, not one sensor's artifact.
+  const hot = ch => perChannel[ch] && perChannel[ch].z >= cfg.elevatedZ;
+  const corroborated = EDA_CHANNELS.some(hot) && CARDIAC_CHANNELS.some(hot);
+
+  let label;
+  if (feat.sqi < cfg.minSQI || !baseline.ready()) label = 'Inconclusive';
+  else if (reactivity >= cfg.deceptiveAbove && corroborated) label = 'Deceptive';
+  else if (reactivity < cfg.truthfulBelow) label = 'Truthful';
+  else label = 'Inconclusive';   // elevated but not cross-corroborated, or borderline
+
+  return {
+    label,
+    reactivity: +reactivity.toFixed(3),
+    meanZ: +meanZ.toFixed(3),
+    confidence: +confidence.toFixed(3),
+    sqi: +feat.sqi.toFixed(3),
+    nElevated,
+    channels: perChannel,
+    baselineReady: baseline.ready(),
+  };
+}
+
+/* ─── Engine — the orchestrator the app talks to ────────────────────────── */
+
+export class PolygraphEngine {
+  constructor(config = {}) {
+    this.cfg = { ...DEFAULT_CONFIG, ...config };
+    const cap = Math.round(this.cfg.bufferSec * this.cfg.fs * 1.5);
+    this.buf = { t: [], gsr: [], ir: [], cap };
+    this.baseline = new BaselineModel(this.cfg.zStdFloorCV);
+    this._baselineStart = null;
+    this.lastFeatures = null;   // most-recent live features (for HR/EDA readouts)
+  }
+
+  reset() {
+    this.buf.t.length = 0; this.buf.gsr.length = 0; this.buf.ir.length = 0;
+    this.baseline = new BaselineModel(this.cfg.zStdFloorCV);
+    this._baselineStart = null;
+    this.lastFeatures = null;
+  }
+
+  // Feed one sample. tMs is device-relative (millis()); monotonic.
+  ingest(tMs, gsr, ir) {
+    const b = this.buf;
+    b.t.push(tMs); b.gsr.push(gsr); b.ir.push(ir);
+    if (b.t.length > b.cap) { b.t.shift(); b.gsr.shift(); b.ir.shift(); }
+  }
+
+  _slice(startMs, endMs) {
+    const b = this.buf, t = [], gsr = [], ir = [];
+    for (let i = 0; i < b.t.length; i++) {
+      if (b.t[i] >= startMs && b.t[i] <= endMs) { t.push(b.t[i]); gsr.push(b.gsr[i]); ir.push(b.ir[i]); }
+    }
+    return { t, gsr, ir };
+  }
+
+  // Scored feature vector for a window. Level channels (hr/scl/pulseAmp/rmssd)
+  // are taken as CHANGE from the immediately-preceding context window — this is
+  // what makes scoring robust to slow baseline drift (a subject whose resting
+  // HR wanders over the session): the drift is present in both the window and
+  // its pre-context and cancels. Phasic channels (scrAmp/scrCount) are absolute
+  // transients and kept as-is. Same transform is applied when building the
+  // baseline, so response and baseline are measured identically.
+  _scoredFeatures(startMs, endMs) {
+    const win = extractFeatures(this._slice(startMs, endMs), this.cfg);
+    // Pre-context is the SAME length as the response window: the per-window
+    // filter warm-up then attenuates both identically and cancels in the delta,
+    // instead of manufacturing a fake amplitude/level change.
+    const preLen = (endMs - startMs);
+    const preSlice = this._slice(startMs - preLen, startMs);
+    const havePre = preSlice.t.length >= this.cfg.fs;   // ≥ ~1 s of context
+    const pre = havePre ? extractFeatures(preSlice, this.cfg) : null;
+    const out = { sqi: win.sqi, scrCount: win.scrCount };
+    for (const f of ['hr', 'scl', 'pulseAmp', 'rmssd']) {
+      out[f] = (pre && Number.isFinite(win[f]) && Number.isFinite(pre[f])) ? win[f] - pre[f] : NaN;
+    }
+    // scrAmp = how far the window's PEAK skin conductance rises above the
+    // calm-before baseline, in calm-before noise units. Referencing the
+    // pre-context (not the window's own detrended signal) means a big SCR is
+    // measured against quiet baseline, so it can't be clipped or self-inflate.
+    out.scrAmp = pre ? Math.max(0, win.gsrMax - pre.gsrBase) / pre.gsrNoise : win.scrAmp;
+    return out;
+  }
+
+  get latestMs() { return this.buf.t.length ? this.buf.t[this.buf.t.length - 1] : 0; }
+
+  // Live vitals for on-screen readouts during capture (not a determination).
+  liveVitals() {
+    const end = this.latestMs;
+    if (end < this.cfg.windowSec * 1000) return null;
+    const slice = this._slice(end - this.cfg.windowSec * 1000, end);
+    const f = extractFeatures(slice, this.cfg);
+    this.lastFeatures = f;
+    return { hr: f.hr, scl: f.scl, sqi: f.sqi };
+  }
+
+  // Fresh baseline model without disturbing the rolling sample buffer — call
+  // at the start of each subject's baseline so models never bleed across people.
+  resetBaseline() { this.baseline = new BaselineModel(this.cfg.zStdFloorCV); }
+
+  // ── Baseline capture ──
+  beginBaseline() { this.resetBaseline(); this._baselineStart = this.latestMs; }
+
+  // Slide analysis windows across everything captured since beginBaseline()
+  // and fold each into the baseline distribution — each measured the same way
+  // a response is (level channels as change-from-pre-context).
+  endBaseline() {
+    if (this._baselineStart == null) return this.baseline.summary();
+    const W = this.cfg.windowSec * 1000, S = this.cfg.baselineStrideSec * 1000;
+    // Start far enough in that the first window has a full (same-length) pre-context.
+    const first = this._baselineStart + W;
+    for (let s = first; s + W <= this.latestMs; s += S) {
+      if (this._slice(s, s + W).t.length < this.cfg.fs) continue;
+      this.baseline.addWindow(this._scoredFeatures(s, s + W));
+    }
+    this._baselineStart = null;
+    return this.baseline.summary();
+  }
+
+  // Fold a single calibration-question response into the baseline (these are
+  // known-neutral answers, so they enrich the "normal reactivity" model).
+  addBaselineResponse(startMs, endMs) {
+    if (this._slice(startMs, endMs).t.length < this.cfg.fs) return;
+    this.baseline.addWindow(this._scoredFeatures(startMs, endMs));
+  }
+
+  // ── Score one live-test response window → determination ──
+  scoreResponse(startMs, endMs) {
+    const feat = this._scoredFeatures(startMs, endMs);
+    this.lastFeatures = feat;
+    return scoreResponseFeatures(feat, this.baseline, this.cfg);
+  }
+
+  baselineSummary() { return this.baseline.summary(); }
+}
+
+export { extractFeatures, BaselineModel, scoreResponseFeatures, FEATURES, CHANNEL_WEIGHTS };

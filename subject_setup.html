@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"/>
+<title>Polygraph — Subject Setup</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: #faf6ee;
+  color: #4a4038;
+  font-family: Arial, sans-serif;
+  min-height: 100vh;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 60px 20px;
+}
+
+.page {
+  width: 100%;
+  max-width: 480px;
+}
+
+h1 {
+  font-size: 1.6rem;
+  font-weight: 600;
+  color: #6b5b52;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
+  text-align: center;
+}
+
+.subtitle {
+  text-align: center;
+  color: #a89a8c;
+  font-size: .9rem;
+  margin-bottom: 40px;
+}
+
+/* ── Subject form ── */
+.card {
+  background: #ffffff;
+  border-radius: 20px;
+  padding: 28px 26px;
+  margin-bottom: 28px;
+  box-shadow: 0 2px 10px rgba(150,120,100,0.08);
+}
+
+.card h2 {
+  font-size: .85rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #c9a99a;
+  margin-bottom: 18px;
+}
+
+.field {
+  margin-bottom: 16px;
+}
+
+.field:last-child {
+  margin-bottom: 0;
+}
+
+label {
+  display: block;
+  font-size: .75rem;
+  color: #a89a8c;
+  margin-bottom: 5px;
+}
+
+input[type="text"], input[type="date"] {
+  width: 100%;
+  border: 1px solid #ecdfd2;
+  background: #fdfaf4;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: .9rem;
+  color: #4a4038;
+  font-family: Arial, sans-serif;
+}
+
+input[type="text"]:focus, input[type="date"]:focus {
+  outline: none;
+  border-color: #e6bcb0;
+}
+
+.consent-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.consent-row input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: #eec3ba;
+}
+
+.consent-row label {
+  margin: 0;
+  font-size: .8rem;
+  color: #8a7c70;
+}
+
+/* ── Baseline capture ── */
+.baseline-card {
+  background: #ffffff;
+  border-radius: 20px;
+  padding: 32px 26px;
+  text-align: center;
+  box-shadow: 0 2px 10px rgba(150,120,100,0.08);
+}
+
+.baseline-card h2 {
+  font-size: .85rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #c9a99a;
+  margin-bottom: 10px;
+}
+
+.baseline-instructions {
+  font-size: .85rem;
+  color: #a89a8c;
+  margin-bottom: 26px;
+  line-height: 1.5;
+}
+
+.ring-wrap {
+  position: relative;
+  width: 160px;
+  height: 160px;
+  margin: 0 auto 26px;
+}
+
+.ring-wrap svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.ring-bg {
+  fill: none;
+  stroke: #f2e9dd;
+  stroke-width: 10;
+}
+
+.ring-progress {
+  fill: none;
+  stroke: #cdeadb;
+  stroke-width: 10;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 1s linear;
+}
+
+.ring-label {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 1.6rem;
+  font-weight: 600;
+  color: #6b5b52;
+}
+
+.baseline-btn {
+  background: #cdeadb;
+  color: #3f6b56;
+  border: none;
+  border-radius: 999px;
+  padding: 13px 38px;
+  font-size: .95rem;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: background .2s;
+}
+
+.baseline-btn:hover {
+  background: #b8e0cb;
+}
+
+.baseline-btn:disabled {
+  background: #f2e9dd;
+  color: #c3b6a8;
+  cursor: default;
+}
+</style>
+</head>
+<body>
+
+<div class="page">
+  <h1>Subject Setup</h1>
+  <p class="subtitle">A calmer way to read the truth.</p>
+
+  <div class="card">
+    <h2>Subject Details</h2>
+    <div class="field">
+      <label for="subj-name">Subject Name</label>
+      <input type="text" id="subj-name" placeholder="Full name"/>
+    </div>
+    <div class="consent-row">
+      <input type="checkbox" id="consent"/>
+      <label for="consent">Subject has provided informed consent</label>
+    </div>
+  </div>
+
+  <div class="baseline-card">
+    <h2>Baseline Capture</h2>
+    <p class="baseline-instructions">Sit still and breathe normally.<br/>We'll use this resting period to calibrate your readings.</p>
+
+    <div class="ring-wrap">
+      <svg viewBox="0 0 160 160">
+        <circle class="ring-bg" cx="80" cy="80" r="70"></circle>
+        <circle class="ring-progress" id="ring" cx="80" cy="80" r="70"
+                stroke-dasharray="439.8" stroke-dashoffset="439.8"></circle>
+      </svg>
+      <div class="ring-label" id="ring-label">2:00</div>
+    </div>
+
+    <button class="baseline-btn" id="baseline-btn" onclick="startBaseline()">Begin Baseline</button>
+  </div>
+</div>
+
+<script>
+"use strict";
+const BASELINE_SECONDS = 120;
+const RING_CIRC = 439.8;
+let baselineTimer = null;
+
+function startBaseline() {
+  const btn = document.getElementById('baseline-btn');
+  const ring = document.getElementById('ring');
+  const label = document.getElementById('ring-label');
+
+  btn.disabled = true;
+  btn.textContent = 'Capturing…';
+
+  let remaining = BASELINE_SECONDS;
+  label.textContent = formatTime(remaining);
+
+  baselineTimer = setInterval(() => {
+    remaining--;
+    const frac = remaining / BASELINE_SECONDS;
+    ring.setAttribute('stroke-dashoffset', RING_CIRC * frac);
+    label.textContent = formatTime(remaining);
+
+    if (remaining <= 0) {
+      clearInterval(baselineTimer);
+      btn.textContent = 'Baseline Complete';
+    }
+  }, 1000);
+}
+
+function formatTime(s) {
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  return m + ':' + String(sec).padStart(2, '0');
+}
+</script>
+
+</body>
+</html>

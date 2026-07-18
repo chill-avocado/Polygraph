@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"/>
+<title>Polygraph — Live Test</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: #faf6ee;
+  color: #4a4038;
+  font-family: Arial, sans-serif;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.page {
+  width: 100%;
+  max-width: 480px;
+  text-align: center;
+}
+
+.eyebrow {
+  font-size: .8rem;
+  letter-spacing: 0.1em;
+  color: #c9a99a;
+  margin-bottom: 6px;
+}
+
+.subject {
+  font-size: .82rem;
+  color: #a89a8c;
+  margin-bottom: 30px;
+}
+
+.card {
+  background: #ffffff;
+  border-radius: 20px;
+  padding: 50px 36px;
+  box-shadow: 0 2px 10px rgba(150,120,100,0.08);
+  min-height: 220px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.capture-wrap {
+  height: 20px;
+  margin-bottom: 26px;
+}
+
+.capture-label {
+  font-size: .72rem;
+  letter-spacing: 0.06em;
+  color: #b9d9c6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.capture-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #b9d9c6;
+  animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: .35; }
+  50% { opacity: 1; }
+}
+
+.action-btn {
+  background: #f3d9d3;
+  color: #6b4a42;
+  border: none;
+  border-radius: 999px;
+  padding: 13px 42px;
+  font-size: .95rem;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: background .2s;
+}
+
+.action-btn:hover {
+  background: #eec3ba;
+}
+
+.action-btn:disabled {
+  background: #f2e9dd;
+  color: #c3b6a8;
+  cursor: default;
+}
+
+.result-badge {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 10px 28px;
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 26px;
+}
+
+.result-truthful { background: #cbead9; color: #2f6b4f; }
+.result-deceptive { background: #f6c6c2; color: #8a3229; }
+.result-inconclusive { background: #fbe7ae; color: #8a6a1a; }
+
+/* ── Traffic-light pulse around the whole card ── */
+.card.glow-truthful     { animation: glowTruthful 1.6s ease-in-out infinite; }
+.card.glow-deceptive    { animation: glowDeceptive 1.3s ease-in-out infinite; }
+.card.glow-inconclusive { animation: glowInconclusive 1.6s ease-in-out infinite; }
+
+@keyframes glowTruthful {
+  0%, 100% { box-shadow: 0 0 0 0   rgba(80,190,140,0.28), 0 2px 10px rgba(150,120,100,0.08); }
+  50%      { box-shadow: 0 0 46px 14px rgba(80,190,140,0.45), 0 2px 10px rgba(150,120,100,0.08); }
+}
+
+@keyframes glowDeceptive {
+  0%, 100% { box-shadow: 0 0 0 0   rgba(230,90,75,0.30), 0 2px 10px rgba(150,120,100,0.08); }
+  50%      { box-shadow: 0 0 52px 16px rgba(230,90,75,0.55), 0 2px 10px rgba(150,120,100,0.08); }
+}
+
+@keyframes glowInconclusive {
+  0%, 100% { box-shadow: 0 0 0 0   rgba(230,180,50,0.28), 0 2px 10px rgba(150,120,100,0.08); }
+  50%      { box-shadow: 0 0 46px 14px rgba(230,180,50,0.45), 0 2px 10px rgba(150,120,100,0.08); }
+}
+
+.again-btn {
+  background: transparent;
+  color: #a89a8c;
+  border: 1px solid #ecdfd2;
+  border-radius: 999px;
+  padding: 10px 26px;
+  font-size: .85rem;
+  cursor: pointer;
+  transition: background .2s;
+}
+
+.again-btn:hover {
+  background: #fdfaf4;
+}
+
+.end-link {
+  display: inline-block;
+  margin-top: 22px;
+  background: none;
+  border: none;
+  color: #c3b6a8;
+  font-size: .82rem;
+  cursor: pointer;
+  font-family: Arial, sans-serif;
+}
+
+.end-link:hover { color: #a89a8c; }
+
+/* ── Analyzing loader — 3x3 dot-matrix with a wandering lit dot + trailing
+   fade, and a typewriter "Analyzing" label whose ink dries into place. ── */
+.analyzing-holder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 50px 0;
+}
+
+.analyzing-grid-box {
+  width: 112px;
+  height: 112px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  place-items: center;
+  margin-bottom: 24px;
+}
+
+.grid-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fbe9d4;
+  transition: background .15s ease, transform .15s ease;
+}
+
+.grid-dot.lit   { background: #ea9b4e; transform: scale(1.25); }
+.grid-dot.lit-2 { background: #eaab5c; transform: scale(1.12); }
+.grid-dot.lit-3 { background: #f5cd9c; transform: scale(1.05); }
+
+.analyzing-label {
+  position: relative;
+  display: inline-block;
+  height: 1.3em;
+  font-size: 1.05rem;
+  letter-spacing: 0.04em;
+  color: #a89a8c;
+}
+
+.analyzing-label .cursor {
+  position: absolute;
+  top: 0;
+  left: 100%;
+  color: #ea9b4e;
+  font-weight: 700;
+  animation: blink 0.8s steps(1) infinite;
+}
+
+.analyzing-label .letter {
+  color: #fbe9d4;
+  transition: color .18s ease;
+  animation: letterShine .3s ease-out;
+}
+
+@keyframes letterShine {
+  0%   { filter: brightness(1.7); }
+  100% { filter: brightness(1); }
+}
+
+.analyzing-label .letter.set { color: #ea9b4e; }
+.analyzing-label .letter.dry { color: #a89a8c; }
+
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  50.01%, 100% { opacity: 0; }
+}
+
+.skip-demo {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  z-index: 50;
+  background: transparent;
+  border: 1px dashed #d3c3b4;
+  color: #a89a8c;
+  font-size: .72rem;
+  letter-spacing: 0.03em;
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: Arial, sans-serif;
+}
+
+.skip-demo:hover {
+  background: #fdfaf4;
+  color: #6b5b52;
+}
+</style>
+</head>
+<body>
+
+<button class="skip-demo" onclick="skipToResult()">Skip (demo)</button>
+
+<div class="page">
+  <div class="eyebrow">LIVE TEST</div>
+  <div class="subject" id="subject"></div>
+
+  <div class="card" id="card">
+    <div class="capture-wrap" id="capture-wrap"></div>
+    <button class="action-btn" id="action-btn" onclick="beginCapture()">Begin Capture</button>
+  </div>
+
+  <div class="analyzing-holder" id="analyzing-holder" style="display:none"></div>
+</div>
+
+<script>
+"use strict";
+const CAPTURE_MIN_MS = 6000;
+// Minimum time the "Analyzing" loader is shown before a determination appears —
+// one full typewriter cycle. Deliberately held even if the (placeholder) result
+// is instant, so the outcome doesn't feel glib.
+const ANALYZING_MIN_MS = 5000;
+
+// Placeholder only — no real signal wired in yet, so the outcome is picked at
+// random just to exercise the three result states.
+const OUTCOMES = [
+  { label: 'Truthful', badge: 'result-truthful', glow: 'glow-truthful' },
+  { label: 'Deceptive', badge: 'result-deceptive', glow: 'glow-deceptive' },
+  { label: 'Inconclusive', badge: 'result-inconclusive', glow: 'glow-inconclusive' }
+];
+
+// ── Show the active subject for continuity across the flow ──
+(function showSubject() {
+  try {
+    const id = localStorage.getItem('polygraph_current');
+    const p = (JSON.parse(localStorage.getItem('polygraph_profiles')) || []).find(x => x.id === id);
+    if (p) document.getElementById('subject').textContent = p.name;
+  } catch (e) {}
+})();
+
+function beginCapture() {
+  const captureWrap = document.getElementById('capture-wrap');
+  const btn = document.getElementById('action-btn');
+
+  btn.disabled = true;
+  captureWrap.innerHTML = '<div class="capture-label"><span class="capture-dot"></span>Capturing response…</div>';
+
+  // Minimum capture window, then the examiner decides when the response settled.
+  setTimeout(() => {
+    btn.disabled = false;
+    btn.textContent = 'Response Settled';
+    btn.onclick = startAnalyzing;
+  }, CAPTURE_MIN_MS);
+}
+
+// ── Analyzing loader ──
+const GRID_PATH = [4, 1, 0, 3, 6, 7, 8, 5, 2, 1, 4, 7, 6, 3, 0, 1, 2, 5, 8, 7, 4];
+const WORD = 'Analyzing';
+const TYPE_MS = 140, ERASE_MS = 55, HOLD_MS = 3000;
+let gridTimer = null;
+let analyzingActive = false;
+
+function startAnalyzing() {
+  const card = document.getElementById('card');
+  const holder = document.getElementById('analyzing-holder');
+  card.style.display = 'none';
+  holder.style.display = 'flex';
+
+  const dots = Array.from({ length: 9 }, () => '<div class="grid-dot"></div>').join('');
+  holder.innerHTML = `
+    <div class="analyzing-grid-box" id="grid-box">${dots}</div>
+    <div class="analyzing-label"><span id="type-text"></span><span class="cursor">|</span></div>
+  `;
+
+  // Wandering lit dot with a two-dot fading trail.
+  const dotEls = holder.querySelectorAll('#grid-box .grid-dot');
+  let step = 0;
+  gridTimer = setInterval(() => {
+    dotEls.forEach(d => d.classList.remove('lit', 'lit-2', 'lit-3'));
+    const cur = GRID_PATH[step % GRID_PATH.length];
+    const prev = GRID_PATH[(step - 1 + GRID_PATH.length) % GRID_PATH.length];
+    const prev2 = GRID_PATH[(step - 2 + GRID_PATH.length) % GRID_PATH.length];
+    if (step >= 2 && prev2 !== cur && prev2 !== prev) dotEls[prev2].classList.add('lit-3');
+    if (step >= 1 && prev !== cur) dotEls[prev].classList.add('lit-2');
+    dotEls[cur].classList.add('lit');
+    step++;
+  }, 200);
+
+  analyzingActive = true;
+  typewriterLoop(holder.querySelector('#type-text'));
+
+  // Hold the loader for at least one full cycle before revealing the result.
+  setTimeout(showResult, ANALYZING_MIN_MS);
+}
+
+function typewriterLoop(typeEl) {
+  typeEl.innerHTML = '';
+  let i = 0;
+  const typeStep = () => {
+    if (!analyzingActive) return;
+    const span = document.createElement('span');
+    span.className = 'letter';
+    span.textContent = WORD[i];
+    typeEl.appendChild(span);
+    // Wet ink → darker "set" → lighter "dry". The dry timeout is nested inside
+    // the rAF callback so it can only fire after "set" has actually applied.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      span.classList.add('set');
+      setTimeout(() => span.classList.replace('set', 'dry'), 120);
+    }));
+    i++;
+    if (i < WORD.length) setTimeout(typeStep, TYPE_MS);
+    else setTimeout(eraseStep, HOLD_MS);
+  };
+  const eraseStep = () => {
+    if (!analyzingActive) return;
+    if (typeEl.lastChild) {
+      typeEl.removeChild(typeEl.lastChild);
+      setTimeout(eraseStep, ERASE_MS);
+    } else {
+      setTimeout(() => typewriterLoop(typeEl), 300);
+    }
+  };
+  typeStep();
+}
+
+function stopAnalyzing() {
+  analyzingActive = false;
+  clearInterval(gridTimer);
+  const holder = document.getElementById('analyzing-holder');
+  holder.style.display = 'none';
+  holder.innerHTML = '';
+}
+
+function showResult() {
+  if (!analyzingActive) return; // guard against a double-fire
+  stopAnalyzing();
+
+  const outcome = OUTCOMES[Math.floor(Math.random() * OUTCOMES.length)];
+  const card = document.getElementById('card');
+  card.style.display = 'flex';
+  card.className = 'card ' + outcome.glow;
+  card.innerHTML = `
+    <div class="result-badge ${outcome.badge}">${outcome.label}</div>
+    <button class="again-btn" onclick="reset()">Run Again</button>
+  `;
+}
+
+function reset() {
+  const card = document.getElementById('card');
+  card.style.display = 'flex';
+  card.className = 'card';
+  card.innerHTML = `
+    <div class="capture-wrap" id="capture-wrap"></div>
+    <button class="action-btn" id="action-btn" onclick="beginCapture()">Begin Capture</button>
+  `;
+}
+
+function endSession() {
+  location.href = 'profiles.html';
+}
+
+// ── Demo-only: force a determination immediately, from any state ──
+function skipToResult() {
+  analyzingActive = false;
+  clearInterval(gridTimer);
+  const holder = document.getElementById('analyzing-holder');
+  holder.style.display = 'none';
+  holder.innerHTML = '';
+
+  const outcome = OUTCOMES[Math.floor(Math.random() * OUTCOMES.length)];
+  const card = document.getElementById('card');
+  card.style.display = 'flex';
+  card.className = 'card ' + outcome.glow;
+  card.innerHTML = `
+    <div class="result-badge ${outcome.badge}">${outcome.label}</div>
+    <button class="again-btn" onclick="reset()">Run Again</button>
+  `;
+}
+</script>
+
+<button class="end-link" onclick="endSession()" style="position:fixed;bottom:24px;left:50%;transform:translateX(-50%)">End session</button>
+
+</body>
+</html>

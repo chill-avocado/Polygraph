@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"/>
+<title>Polygraph — Subject Profiles</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: #faf6ee;
+  color: #4a4038;
+  font-family: Arial, sans-serif;
+  min-height: 100vh;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 60px 20px;
+}
+
+.page {
+  width: 100%;
+  max-width: 480px;
+}
+
+.eyebrow {
+  text-align: center;
+  font-size: .72rem;
+  letter-spacing: 0.22em;
+  color: #c9a99a;
+  margin-bottom: 14px;
+}
+
+h1 {
+  font-size: 1.6rem;
+  font-weight: 600;
+  color: #6b5b52;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
+  text-align: center;
+}
+
+.subtitle {
+  text-align: center;
+  color: #a89a8c;
+  font-size: .9rem;
+  margin-bottom: 36px;
+}
+
+.section-label {
+  font-size: .72rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #c9a99a;
+  margin-bottom: 12px;
+  padding-left: 4px;
+}
+
+/* ── Saved profile cards ── */
+.profile-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 30px;
+}
+
+.profile-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: #ffffff;
+  border-radius: 16px;
+  padding: 16px 18px;
+  box-shadow: 0 2px 10px rgba(150,120,100,0.08);
+  cursor: pointer;
+  transition: box-shadow .2s, transform .05s;
+}
+
+.profile-card:hover {
+  box-shadow: 0 4px 16px rgba(150,120,100,0.14);
+}
+
+.profile-card:active {
+  transform: scale(0.99);
+}
+
+.avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: #f3e3dd;
+  color: #b98a7c;
+  font-size: .95rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.profile-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.profile-name {
+  font-size: 1rem;
+  color: #5a4d44;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.profile-status {
+  font-size: .78rem;
+  color: #a89a8c;
+  margin-top: 3px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-dot.done { background: #8fcaa8; }
+.status-dot.pending { background: #e6c23f; }
+
+.chevron {
+  color: #d6c6b8;
+  font-size: 1.4rem;
+  flex-shrink: 0;
+}
+
+/* ── Empty state ── */
+.empty {
+  background: #ffffff;
+  border-radius: 16px;
+  padding: 34px 24px;
+  text-align: center;
+  color: #a89a8c;
+  font-size: .9rem;
+  line-height: 1.5;
+  box-shadow: 0 2px 10px rgba(150,120,100,0.08);
+  margin-bottom: 30px;
+}
+
+/* ── Create new ── */
+.create-btn {
+  width: 100%;
+  background: #f3d9d3;
+  color: #6b4a42;
+  border: none;
+  border-radius: 999px;
+  padding: 15px;
+  font-size: .95rem;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: background .2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.create-btn:hover {
+  background: #eec3ba;
+}
+
+.create-btn .plus {
+  font-size: 1.15rem;
+  line-height: 1;
+}
+</style>
+</head>
+<body>
+
+<div class="page">
+  <div class="eyebrow">POLYGRAPH</div>
+  <h1>Subject Profiles</h1>
+  <p class="subtitle">Select a profile or create a new one.</p>
+
+  <div id="saved-wrap" style="display:none">
+    <div class="section-label">Saved Profiles</div>
+    <div class="profile-list" id="profile-list"></div>
+  </div>
+
+  <div class="empty" id="empty">
+    No saved profiles yet.<br/>Create one to begin a session.
+  </div>
+
+  <button class="create-btn" onclick="createNew()">
+    <span class="plus">+</span> Create New Profile
+  </button>
+</div>
+
+<script>
+"use strict";
+const PROFILES_KEY = 'polygraph_profiles';
+const CURRENT_KEY = 'polygraph_current';
+
+function loadProfiles() {
+  try { return JSON.parse(localStorage.getItem(PROFILES_KEY)) || []; }
+  catch (e) { return []; }
+}
+
+function initials(name) {
+  const parts = name.trim().split(/\s+/);
+  const first = parts[0] ? parts[0][0] : '';
+  const last = parts.length > 1 ? parts[parts.length - 1][0] : '';
+  return (first + last).toUpperCase() || '?';
+}
+
+function formatDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function render() {
+  const profiles = loadProfiles();
+  const wrap = document.getElementById('saved-wrap');
+  const empty = document.getElementById('empty');
+  const list = document.getElementById('profile-list');
+
+  if (profiles.length === 0) {
+    wrap.style.display = 'none';
+    empty.style.display = 'block';
+    return;
+  }
+
+  wrap.style.display = 'block';
+  empty.style.display = 'none';
+  list.innerHTML = '';
+
+  // Newest first.
+  profiles.slice().reverse().forEach(p => {
+    const card = document.createElement('div');
+    card.className = 'profile-card';
+    card.onclick = () => selectProfile(p.id);
+
+    const status = p.baseline
+      ? `<span class="status-dot done"></span>Baseline saved${p.baselineAt ? ' · ' + formatDate(p.baselineAt) : ''}`
+      : `<span class="status-dot pending"></span>No baseline yet`;
+
+    card.innerHTML = `
+      <div class="avatar">${initials(p.name)}</div>
+      <div class="profile-info">
+        <div class="profile-name">${p.name}</div>
+        <div class="profile-status">${status}</div>
+      </div>
+      <div class="chevron">&rsaquo;</div>
+    `;
+    list.appendChild(card);
+  });
+}
+
+function selectProfile(id) {
+  localStorage.setItem(CURRENT_KEY, id);
+  const p = loadProfiles().find(x => x.id === id);
+  // A profile that already has a baseline jumps straight to its confirmation;
+  // otherwise it heads into baseline setup.
+  location.href = (p && p.baseline) ? 'baseline_saved.html' : 'baseline_focus.html';
+}
+
+function createNew() {
+  location.href = 'profile_new.html';
+}
+
+render();
+</script>
+
+</body>
+</html>

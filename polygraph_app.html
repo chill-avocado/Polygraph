@@ -1,0 +1,2259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover"/>
+<title>Polygraph</title>
+<style>
+/* ══════════════════════════════════════════════════════════════════════
+   GLOBAL — shared by every screen. Screen-specific rules live further
+   down, each scoped under its own #screen-xxx id so no screen's styling
+   can leak into another's, even where two screens reuse a class name
+   like .card or .page.
+   ══════════════════════════════════════════════════════════════════════ */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  width: 100%;
+  min-height: 100%;
+}
+
+body {
+  background: #faf6ee;
+  color: #4a4038;
+  font-family: Arial, sans-serif;
+  position: relative;
+  overflow-x: hidden;
+}
+
+/* Only one screen is ever in flow at a time; the rest are display:none.
+   Each screen's own #screen-xxx.active rule (further down) sets the
+   specific display mode (flex-centered, block, etc.) it needs — that
+   selector is more specific (id + class) than this one, so it wins. */
+.screen { display: none; min-height: 100vh; width: 100%; }
+.screen.active { display: block; }
+
+/* ── Shared across screens: identical wherever they appear, so defined once ── */
+@keyframes pulse {
+  0%, 100% { opacity: .35; }
+  50% { opacity: 1; }
+}
+
+@keyframes letterShine {
+  0%   { filter: brightness(1.7); }
+  100% { filter: brightness(1); }
+}
+
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  50.01%, 100% { opacity: 0; }
+}
+
+.skip-demo {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  z-index: 50;
+  background: transparent;
+  border: 1px dashed #d3c3b4;
+  color: #a89a8c;
+  font-size: .72rem;
+  letter-spacing: 0.03em;
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: Arial, sans-serif;
+}
+
+.skip-demo:hover {
+  background: #fdfaf4;
+  color: #6b5b52;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   SCREEN: landing
+   ══════════════════════════════════════════════════════════════════════ */
+#screen-landing.active {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#screen-landing .landing { text-align: center; }
+
+#screen-landing .landing h1 {
+  font-size: 2.4rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: #6b5b52;
+  margin-bottom: 14px;
+}
+
+#screen-landing .landing p {
+  font-size: 1rem;
+  color: #a89a8c;
+  margin-bottom: 40px;
+}
+
+#screen-landing .start-btn {
+  background: #f3d9d3;
+  color: #6b4a42;
+  border: none;
+  border-radius: 999px;
+  padding: 14px 42px;
+  font-size: 1rem;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background .2s;
+}
+
+#screen-landing .start-btn:hover { background: #eec3ba; }
+
+/* ══════════════════════════════════════════════════════════════════════
+   SCREEN: profiles
+   ══════════════════════════════════════════════════════════════════════ */
+#screen-profiles.active {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 60px 20px;
+}
+
+#screen-profiles .page { width: 100%; max-width: 480px; }
+
+#screen-profiles .eyebrow {
+  text-align: center;
+  font-size: .72rem;
+  letter-spacing: 0.22em;
+  color: #c9a99a;
+  margin-bottom: 14px;
+}
+
+#screen-profiles h1 {
+  font-size: 1.6rem;
+  font-weight: 600;
+  color: #6b5b52;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
+  text-align: center;
+}
+
+#screen-profiles .subtitle {
+  text-align: center;
+  color: #a89a8c;
+  font-size: .9rem;
+  margin-bottom: 36px;
+}
+
+#screen-profiles .section-label {
+  font-size: .72rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #c9a99a;
+  margin-bottom: 12px;
+  padding-left: 4px;
+}
+
+#screen-profiles .profile-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 30px;
+}
+
+#screen-profiles .profile-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: #ffffff;
+  border-radius: 16px;
+  padding: 16px 18px;
+  box-shadow: 0 2px 10px rgba(150,120,100,0.08);
+  cursor: pointer;
+  transition: box-shadow .2s, transform .05s;
+}
+
+#screen-profiles .profile-card:hover { box-shadow: 0 4px 16px rgba(150,120,100,0.14); }
+#screen-profiles .profile-card:active { transform: scale(0.99); }
+
+#screen-profiles .avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: #f3e3dd;
+  color: #b98a7c;
+  font-size: .95rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+#screen-profiles .profile-info { flex: 1; min-width: 0; }
+
+#screen-profiles .profile-name {
+  font-size: 1rem;
+  color: #5a4d44;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#screen-profiles .profile-status {
+  font-size: .78rem;
+  color: #a89a8c;
+  margin-top: 3px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#screen-profiles .status-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+#screen-profiles .status-dot.done { background: #8fcaa8; }
+#screen-profiles .status-dot.pending { background: #e6c23f; }
+
+#screen-profiles .chevron { color: #d6c6b8; font-size: 1.4rem; flex-shrink: 0; }
+
+#screen-profiles .empty {
+  background: #ffffff;
+  border-radius: 16px;
+  padding: 34px 24px;
+  text-align: center;
+  color: #a89a8c;
+  font-size: .9rem;
+  line-height: 1.5;
+  box-shadow: 0 2px 10px rgba(150,120,100,0.08);
+  margin-bottom: 30px;
+}
+
+#screen-profiles .create-btn {
+  width: 100%;
+  background: #f3d9d3;
+  color: #6b4a42;
+  border: none;
+  border-radius: 999px;
+  padding: 15px;
+  font-size: .95rem;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: background .2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+#screen-profiles .create-btn:hover { background: #eec3ba; }
+#screen-profiles .create-btn .plus { font-size: 1.15rem; line-height: 1; }
+
+/* ══════════════════════════════════════════════════════════════════════
+   SCREEN: profile-new
+   ══════════════════════════════════════════════════════════════════════ */
+#screen-profile-new.active {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 60px 20px;
+}
+
+#screen-profile-new .page { width: 100%; max-width: 480px; }
+
+#screen-profile-new .back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  color: #a89a8c;
+  font-size: .85rem;
+  cursor: pointer;
+  margin-bottom: 24px;
+  font-family: Arial, sans-serif;
+}
+
+#screen-profile-new .back:hover { color: #6b5b52; }
+
+#screen-profile-new h1 {
+  font-size: 1.6rem;
+  font-weight: 600;
+  color: #6b5b52;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
+  text-align: center;
+}
+
+#screen-profile-new .subtitle {
+  text-align: center;
+  color: #a89a8c;
+  font-size: .9rem;
+  margin-bottom: 34px;
+}
+
+#screen-profile-new .card {
+  background: #ffffff;
+  border-radius: 20px;
+  padding: 28px 26px;
+  margin-bottom: 28px;
+  box-shadow: 0 2px 10px rgba(150,120,100,0.08);
+}
+
+#screen-profile-new .card h2 {
+  font-size: .85rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #c9a99a;
+  margin-bottom: 18px;
+}
+
+#screen-profile-new .field { margin-bottom: 16px; }
+#screen-profile-new .field:last-child { margin-bottom: 0; }
+
+#screen-profile-new label {
+  display: block;
+  font-size: .75rem;
+  color: #a89a8c;
+  margin-bottom: 5px;
+}
+
+#screen-profile-new input[type="text"] {
+  width: 100%;
+  border: 1px solid #ecdfd2;
+  background: #fdfaf4;
+  border-radius: 10px;
+  padding: 11px 12px;
+  font-size: .9rem;
+  color: #4a4038;
+  font-family: Arial, sans-serif;
+}
+
+#screen-profile-new input[type="text"]:focus { outline: none; border-color: #e6bcb0; }
+
+#screen-profile-new .consent-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+#screen-profile-new .consent-row input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: #eec3ba;
+  flex-shrink: 0;
+}
+
+#screen-profile-new .consent-row label { margin: 0; font-size: .8rem; color: #8a7c70; }
+
+#screen-profile-new .next-btn {
+  width: 100%;
+  background: #cdeadb;
+  color: #3f6b56;
+  border: none;
+  border-radius: 999px;
+  padding: 15px;
+  font-size: .95rem;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: background .2s;
+}
+
+#screen-profile-new .next-btn:hover { background: #b8e0cb; }
+
+#screen-profile-new .next-btn:disabled {
+  background: #f2e9dd;
+  color: #c3b6a8;
+  cursor: default;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   SCREEN: baseline-focus (resting capture — hourglass, drifting dot)
+   ══════════════════════════════════════════════════════════════════════ */
+#screen-baseline-focus.active { display: block; height: 100vh; overflow: hidden; }
+
+#screen-baseline-focus #hue {
+  position: absolute;
+  inset: 0;
+  background: #dce9f2;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+body.breathing-bg #screen-baseline-focus #hue {
+  animation: breathHue 4.5s ease-in-out infinite;
+  will-change: opacity;
+}
+
+@keyframes breathHue {
+  0%   { opacity: 0; }
+  42%  { opacity: 0.55; }
+  100% { opacity: 0; }
+}
+
+#screen-baseline-focus #intro {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 34px;
+  background: #faf6ee;
+  z-index: 10;
+  padding: 20px;
+}
+
+#screen-baseline-focus #intro .instructions {
+  max-width: 380px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+#screen-baseline-focus #intro .instructions .primary,
+#screen-baseline-focus #intro .instructions .secondary {
+  font-size: 1rem;
+  color: #6b5b52;
+  line-height: 1.6;
+}
+
+#screen-baseline-focus #intro .instructions p { position: relative; }
+
+#screen-baseline-focus .type-cursor {
+  position: absolute;
+  color: #ea9b4e;
+  font-weight: 700;
+  animation: blink 0.8s steps(1) infinite;
+}
+
+#screen-baseline-focus .type-letter {
+  color: #c9915f;
+  transition: color .18s ease;
+  animation: letterShine .3s ease-out;
+}
+
+#screen-baseline-focus .type-letter.set { color: #ea9b4e; }
+#screen-baseline-focus .type-letter.dry { color: #6b5b52; }
+
+#screen-baseline-focus .continue-btn {
+  background: #f3d9d3;
+  color: #6b4a42;
+  border: none;
+  border-radius: 999px;
+  padding: 13px 38px;
+  font-size: .95rem;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: background .2s, opacity .3s;
+}
+
+#screen-baseline-focus .continue-btn:hover { background: #eec3ba; }
+
+#screen-baseline-focus .continue-btn.hidden { opacity: 0; pointer-events: none; }
+
+#screen-baseline-focus .slide {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 34px;
+}
+
+#screen-baseline-focus .welcome-text {
+  font-size: 2rem;
+  font-weight: 600;
+  color: #6b5b52;
+  letter-spacing: 0.04em;
+}
+
+#screen-baseline-focus .bf-dots { display: flex; gap: 8px; }
+
+#screen-baseline-focus .bf-dots .bf-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f2e9dd;
+  transition: background .3s;
+}
+
+#screen-baseline-focus .bf-dots .bf-dot.active { background: #c9a99a; }
+
+#screen-baseline-focus #dot-wrap {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 34px;
+  height: 34px;
+  z-index: 1;
+  will-change: transform;
+}
+
+#screen-baseline-focus .focus-dot {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: #bcd8ea;
+}
+
+#screen-baseline-focus .focus-dot.breathing { animation: breathe 4.5s ease-in-out infinite; }
+
+@keyframes breathe {
+  0%   { transform: scale(0.92); }
+  42%  { transform: scale(1.1); }
+  100% { transform: scale(0.92); }
+}
+
+#screen-baseline-focus .wall-paddle {
+  position: absolute;
+  background: #c2b09a;
+  opacity: 0.9;
+  border-radius: 0;
+  z-index: 3;
+  will-change: transform;
+}
+
+#screen-baseline-focus .wall-paddle.horizontal { width: 64px; height: 8px; }
+#screen-baseline-focus .wall-paddle.vertical { width: 8px; height: 64px; }
+
+#screen-baseline-focus #paddle-top    { top: 0; left: 0; }
+#screen-baseline-focus #paddle-bottom { bottom: 0; left: 0; }
+#screen-baseline-focus #paddle-left   { left: 0; top: 0; }
+#screen-baseline-focus #paddle-right  { right: 0; top: 0; }
+
+#screen-baseline-focus #complete {
+  position: absolute;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: #faf6ee;
+  z-index: 5;
+}
+
+#screen-baseline-focus #complete.visible { display: flex; }
+
+#screen-baseline-focus #complete .complete-title {
+  font-size: 1.3rem;
+  font-weight: 600;
+  color: #6b5b52;
+  letter-spacing: 0.03em;
+}
+
+#screen-baseline-focus #complete .complete-sub { font-size: .9rem; color: #a89a8c; }
+
+#screen-baseline-focus #hourglass-wrap {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 76px;
+  height: 120px;
+  z-index: 2;
+}
+
+#screen-baseline-focus .grain { fill: #6ea9cf; opacity: 0; }
+
+#screen-baseline-focus .hg-h { width: 44px; height: 8px; }
+#screen-baseline-focus .hg-v { width: 8px; height: 44px; }
+
+/* ══════════════════════════════════════════════════════════════════════
+   SCREEN: baseline-questions
+   ══════════════════════════════════════════════════════════════════════ */
+#screen-baseline-questions.active {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  min-height: 100vh;
+}
+
+#screen-baseline-questions .page { width: 100%; max-width: 480px; text-align: center; }
+
+#screen-baseline-questions .eyebrow {
+  font-size: .8rem;
+  letter-spacing: 0.1em;
+  color: #c9a99a;
+  margin-bottom: 30px;
+}
+
+#screen-baseline-questions .card {
+  background: #ffffff;
+  border-radius: 20px;
+  padding: 50px 36px;
+  box-shadow: 0 2px 10px rgba(150,120,100,0.08);
+}
+
+#screen-baseline-questions .question {
+  font-size: 1.4rem;
+  font-weight: 600;
+  color: #6b5b52;
+  line-height: 1.5;
+  margin-bottom: 42px;
+}
+
+#screen-baseline-questions .bq-dots {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 34px;
+}
+
+#screen-baseline-questions .bq-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f2e9dd;
+  transition: background .2s;
+}
+
+#screen-baseline-questions .bq-dot.active { background: #e6bcb0; }
+#screen-baseline-questions .bq-dot.done { background: #cdeadb; }
+
+#screen-baseline-questions .next-btn {
+  background: #f3d9d3;
+  color: #6b4a42;
+  border: none;
+  border-radius: 999px;
+  padding: 13px 42px;
+  font-size: .95rem;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: background .2s;
+}
+
+#screen-baseline-questions .next-btn:hover { background: #eec3ba; }
+
+#screen-baseline-questions .next-btn:disabled {
+  background: #f2e9dd;
+  color: #c3b6a8;
+  cursor: default;
+}
+
+#screen-baseline-questions .done-msg { font-size: 1.1rem; color: #6b5b52; font-weight: 600; }
+
+#screen-baseline-questions .capture-wrap { height: 20px; margin-bottom: 22px; }
+
+#screen-baseline-questions .capture-label {
+  font-size: .72rem;
+  letter-spacing: 0.06em;
+  color: #b9d9c6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+#screen-baseline-questions .capture-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #b9d9c6;
+  animation: pulse 1s ease-in-out infinite;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   SCREEN: baseline-saved
+   ══════════════════════════════════════════════════════════════════════ */
+#screen-baseline-saved.active {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  min-height: 100vh;
+}
+
+#screen-baseline-saved .page { width: 100%; max-width: 400px; text-align: center; }
+
+#screen-baseline-saved .check-ring {
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  background: #e3f2ea;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 26px;
+  animation: pop .4s ease-out;
+}
+
+@keyframes pop {
+  0%   { transform: scale(0.6); opacity: 0; }
+  60%  { transform: scale(1.08); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+#screen-baseline-saved .check-ring svg { width: 40px; height: 40px; }
+
+#screen-baseline-saved .check-ring path {
+  fill: none;
+  stroke: #6fae8b;
+  stroke-width: 5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 40;
+  stroke-dashoffset: 40;
+  animation: draw .45s .2s ease-out forwards;
+}
+
+@keyframes draw { to { stroke-dashoffset: 0; } }
+
+#screen-baseline-saved h1 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: #6b5b52;
+  letter-spacing: 0.03em;
+  margin-bottom: 10px;
+}
+
+#screen-baseline-saved .who { font-size: .95rem; color: #8a7c70; margin-bottom: 6px; }
+
+#screen-baseline-saved .sub {
+  font-size: .88rem;
+  color: #a89a8c;
+  line-height: 1.5;
+  margin-bottom: 36px;
+}
+
+#screen-baseline-saved .actions { display: flex; flex-direction: column; gap: 12px; }
+
+#screen-baseline-saved .btn-primary {
+  background: #f3d9d3;
+  color: #6b4a42;
+  border: none;
+  border-radius: 999px;
+  padding: 14px;
+  font-size: .95rem;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: background .2s;
+}
+
+#screen-baseline-saved .btn-primary:hover { background: #eec3ba; }
+
+#screen-baseline-saved .btn-secondary {
+  background: transparent;
+  color: #a89a8c;
+  border: 1px solid #ecdfd2;
+  border-radius: 999px;
+  padding: 13px;
+  font-size: .9rem;
+  cursor: pointer;
+  transition: background .2s;
+}
+
+#screen-baseline-saved .btn-secondary:hover { background: #fdfaf4; }
+
+/* ══════════════════════════════════════════════════════════════════════
+   SCREEN: live-test
+   ══════════════════════════════════════════════════════════════════════ */
+#screen-live-test.active {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  min-height: 100vh;
+}
+
+#screen-live-test .page { width: 100%; max-width: 480px; text-align: center; }
+
+#screen-live-test .eyebrow { font-size: .8rem; letter-spacing: 0.1em; color: #c9a99a; margin-bottom: 6px; }
+#screen-live-test .subject { font-size: .82rem; color: #a89a8c; margin-bottom: 30px; }
+
+#screen-live-test .card {
+  background: #ffffff;
+  border-radius: 20px;
+  padding: 50px 36px;
+  box-shadow: 0 2px 10px rgba(150,120,100,0.08);
+  min-height: 220px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+#screen-live-test .capture-wrap { height: 20px; margin-bottom: 26px; }
+
+#screen-live-test .capture-label {
+  font-size: .72rem;
+  letter-spacing: 0.06em;
+  color: #b9d9c6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+#screen-live-test .capture-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #b9d9c6;
+  animation: pulse 1s ease-in-out infinite;
+}
+
+#screen-live-test .action-btn {
+  background: #f3d9d3;
+  color: #6b4a42;
+  border: none;
+  border-radius: 999px;
+  padding: 13px 42px;
+  font-size: .95rem;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: background .2s;
+}
+
+#screen-live-test .action-btn:hover { background: #eec3ba; }
+
+#screen-live-test .action-btn:disabled {
+  background: #f2e9dd;
+  color: #c3b6a8;
+  cursor: default;
+}
+
+#screen-live-test .result-badge {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 10px 28px;
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 26px;
+}
+
+#screen-live-test .result-truthful { background: #cbead9; color: #2f6b4f; }
+#screen-live-test .result-deceptive { background: #f6c6c2; color: #8a3229; }
+#screen-live-test .result-inconclusive { background: #fbe7ae; color: #8a6a1a; }
+
+#screen-live-test .card.glow-truthful     { animation: glowTruthful 1.6s ease-in-out infinite; }
+#screen-live-test .card.glow-deceptive    { animation: glowDeceptive 1.3s ease-in-out infinite; }
+#screen-live-test .card.glow-inconclusive { animation: glowInconclusive 1.6s ease-in-out infinite; }
+
+@keyframes glowTruthful {
+  0%, 100% { box-shadow: 0 0 0 0   rgba(80,190,140,0.28), 0 2px 10px rgba(150,120,100,0.08); }
+  50%      { box-shadow: 0 0 46px 14px rgba(80,190,140,0.45), 0 2px 10px rgba(150,120,100,0.08); }
+}
+
+@keyframes glowDeceptive {
+  0%, 100% { box-shadow: 0 0 0 0   rgba(230,90,75,0.30), 0 2px 10px rgba(150,120,100,0.08); }
+  50%      { box-shadow: 0 0 52px 16px rgba(230,90,75,0.55), 0 2px 10px rgba(150,120,100,0.08); }
+}
+
+@keyframes glowInconclusive {
+  0%, 100% { box-shadow: 0 0 0 0   rgba(230,180,50,0.28), 0 2px 10px rgba(150,120,100,0.08); }
+  50%      { box-shadow: 0 0 46px 14px rgba(230,180,50,0.45), 0 2px 10px rgba(150,120,100,0.08); }
+}
+
+#screen-live-test .again-btn {
+  background: transparent;
+  color: #a89a8c;
+  border: 1px solid #ecdfd2;
+  border-radius: 999px;
+  padding: 10px 26px;
+  font-size: .85rem;
+  cursor: pointer;
+  transition: background .2s;
+}
+
+#screen-live-test .again-btn:hover { background: #fdfaf4; }
+
+#screen-live-test .end-link {
+  display: inline-block;
+  background: none;
+  border: none;
+  color: #c3b6a8;
+  font-size: .82rem;
+  cursor: pointer;
+  font-family: Arial, sans-serif;
+}
+
+#screen-live-test .end-link:hover { color: #a89a8c; }
+
+#screen-live-test .analyzing-holder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 50px 0;
+}
+
+#screen-live-test .analyzing-grid-box {
+  width: 112px;
+  height: 112px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  place-items: center;
+  margin-bottom: 24px;
+}
+
+#screen-live-test .grid-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fbe9d4;
+  transition: background .15s ease, transform .15s ease;
+}
+
+#screen-live-test .grid-dot.lit   { background: #ea9b4e; transform: scale(1.25); }
+#screen-live-test .grid-dot.lit-2 { background: #eaab5c; transform: scale(1.12); }
+#screen-live-test .grid-dot.lit-3 { background: #f5cd9c; transform: scale(1.05); }
+
+#screen-live-test .analyzing-label {
+  position: relative;
+  display: inline-block;
+  height: 1.3em;
+  font-size: 1.05rem;
+  letter-spacing: 0.04em;
+  color: #a89a8c;
+}
+
+#screen-live-test .analyzing-label .cursor {
+  position: absolute;
+  top: 0;
+  left: 100%;
+  color: #ea9b4e;
+  font-weight: 700;
+  animation: blink 0.8s steps(1) infinite;
+}
+
+#screen-live-test .analyzing-label .letter {
+  color: #fbe9d4;
+  transition: color .18s ease;
+  animation: letterShine .3s ease-out;
+}
+
+#screen-live-test .analyzing-label .letter.set { color: #ea9b4e; }
+#screen-live-test .analyzing-label .letter.dry { color: #a89a8c; }
+</style>
+</head>
+<body>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     SCREEN: landing
+     ════════════════════════════════════════════════════════════════════ -->
+<section class="screen active" id="screen-landing">
+  <div class="landing">
+    <h1>Polygraph</h1>
+    <p>A calmer way to read the truth.</p>
+    <button class="start-btn" id="ld-start-btn">Start Session</button>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     SCREEN: profiles
+     ════════════════════════════════════════════════════════════════════ -->
+<section class="screen" id="screen-profiles">
+  <div class="page">
+    <div class="eyebrow">POLYGRAPH</div>
+    <h1>Subject Profiles</h1>
+    <p class="subtitle">Select a profile or create a new one.</p>
+
+    <div id="pf-saved-wrap" style="display:none">
+      <div class="section-label">Saved Profiles</div>
+      <div class="profile-list" id="pf-profile-list"></div>
+    </div>
+
+    <div class="empty" id="pf-empty">
+      No saved profiles yet.<br/>Create one to begin a session.
+    </div>
+
+    <button class="create-btn" id="pf-create-btn">
+      <span class="plus">+</span> Create New Profile
+    </button>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     SCREEN: profile-new
+     ════════════════════════════════════════════════════════════════════ -->
+<section class="screen" id="screen-profile-new">
+  <div class="page">
+    <button class="back" id="pn-back-btn">&lsaquo; Profiles</button>
+
+    <h1>New Profile</h1>
+    <p class="subtitle">A calmer way to read the truth.</p>
+
+    <div class="card">
+      <h2>Subject Details</h2>
+      <div class="field">
+        <label for="pn-subj-name">Subject Name</label>
+        <input type="text" id="pn-subj-name" placeholder="Full name" autocomplete="off"/>
+      </div>
+      <div class="consent-row">
+        <input type="checkbox" id="pn-consent"/>
+        <label for="pn-consent">Subject has provided informed consent</label>
+      </div>
+    </div>
+
+    <button class="next-btn" id="pn-next-btn" disabled>Set up Baseline</button>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     SCREEN: baseline-focus
+     ════════════════════════════════════════════════════════════════════ -->
+<section class="screen" id="screen-baseline-focus">
+
+  <button class="skip-demo" id="bf-skip-btn">Skip (demo)</button>
+
+  <div id="intro">
+    <div class="slide" id="slide-welcome">
+      <h1 class="welcome-text">Welcome</h1>
+      <button class="continue-btn" id="bf-welcome-next">Next</button>
+    </div>
+
+    <div class="slide" id="slide-instructions" style="display:none">
+      <div class="instructions">
+        <p class="primary" id="primary-text"></p>
+        <p class="secondary" id="secondary-text"></p>
+      </div>
+      <button class="continue-btn hidden" id="continue-btn">Continue</button>
+    </div>
+
+    <div class="bf-dots">
+      <span class="bf-dot active" id="dot1"></span>
+      <span class="bf-dot" id="dot2"></span>
+    </div>
+  </div>
+
+  <div id="hue"></div>
+
+  <div id="dot-wrap">
+    <div class="focus-dot" id="focus-dot"></div>
+  </div>
+
+  <div class="wall-paddle horizontal" id="paddle-top"></div>
+  <div class="wall-paddle horizontal" id="paddle-bottom"></div>
+  <div class="wall-paddle vertical" id="paddle-left"></div>
+  <div class="wall-paddle vertical" id="paddle-right"></div>
+
+  <div class="wall-paddle hg-h" id="hg-paddle-top"></div>
+  <div class="wall-paddle hg-h" id="hg-paddle-bottom"></div>
+  <div class="wall-paddle hg-v" id="hg-paddle-left"></div>
+  <div class="wall-paddle hg-v" id="hg-paddle-right"></div>
+
+  <div id="hourglass-wrap">
+    <svg viewBox="0 0 76 120" width="100%" height="100%">
+      <defs>
+        <path id="bulb-top" d="M11,8 C11,38 35,46 35,58 L41,58 C41,46 65,38 65,8 Z"/>
+        <path id="bulb-bottom" d="M35,62 C35,74 11,82 11,112 L65,112 C65,82 41,74 41,62 Z"/>
+        <path id="glass" d="M11,8 C11,38 35,46 35,58 L35,62 C35,74 11,82 11,112
+                            L65,112 C65,82 42,74 42,62 L41,58 C41,46 65,38 65,8 Z"/>
+        <clipPath id="clip-top"><use href="#bulb-top"/></clipPath>
+        <clipPath id="clip-bottom"><use href="#bulb-bottom"/></clipPath>
+        <clipPath id="clip-stream">
+          <path d="M35,56 L41,56 L41,62 C41,74 65,82 65,112 L11,112 C11,82 35,74 35,62 Z"/>
+        </clipPath>
+      </defs>
+
+      <path id="top-sand" fill="#bcd8ea" clip-path="url(#clip-top)" d=""/>
+      <path id="bottom-sand" fill="#bcd8ea" clip-path="url(#clip-bottom)" d=""/>
+
+      <g id="grain-layer"></g>
+
+      <use href="#glass" fill="none" stroke="#c2b09a" stroke-width="2.2" stroke-linejoin="round"/>
+
+      <rect x="6" y="3" width="64" height="5" rx="2.5" fill="#c2b09a"/>
+      <rect x="6" y="112" width="64" height="5" rx="2.5" fill="#c2b09a"/>
+    </svg>
+  </div>
+
+  <div id="complete">
+    <div class="complete-title">Baseline Complete</div>
+    <div class="complete-sub">Please pass the device back to the examiner.</div>
+    <button class="continue-btn" id="bf-proceed-btn" style="margin-top:14px">Continue</button>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     SCREEN: baseline-questions
+     ════════════════════════════════════════════════════════════════════ -->
+<section class="screen" id="screen-baseline-questions">
+  <button class="skip-demo" id="bq-skip-btn">Skip (demo)</button>
+
+  <div class="page">
+    <div class="eyebrow" id="bq-eyebrow">Baseline Questions</div>
+
+    <div class="card">
+      <div class="bq-dots" id="bq-dots"></div>
+      <div class="question" id="bq-question-text"></div>
+      <div class="capture-wrap" id="bq-capture-wrap"></div>
+      <button class="next-btn" id="bq-next-btn">Next</button>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     SCREEN: baseline-saved
+     ════════════════════════════════════════════════════════════════════ -->
+<section class="screen" id="screen-baseline-saved">
+  <div class="page">
+    <div class="check-ring">
+      <svg viewBox="0 0 40 40">
+        <path d="M11 20.5 L17.5 27 L29 14"/>
+      </svg>
+    </div>
+
+    <h1>Baseline Saved</h1>
+    <div class="who" id="bs-who"></div>
+    <p class="sub">The resting baseline has been recorded. You can begin the examination whenever you're ready.</p>
+
+    <div class="actions">
+      <button class="btn-primary" id="bs-begin-test">Begin Test</button>
+      <button class="btn-secondary" id="bs-back-profiles">Back to Profiles</button>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     SCREEN: live-test
+     ════════════════════════════════════════════════════════════════════ -->
+<section class="screen" id="screen-live-test">
+  <button class="skip-demo" id="lt-skip-btn">Skip (demo)</button>
+  <button class="skip-demo" id="lt-react-btn" style="top:48px">⚡ Simulate reaction (demo)</button>
+
+  <div class="page">
+    <div class="eyebrow">LIVE TEST</div>
+    <div class="subject" id="lt-subject"></div>
+    <div class="subject" id="lt-vitals" style="font-size:.72rem;letter-spacing:.05em;margin-top:-22px;min-height:1em"></div>
+
+    <div class="card" id="lt-card">
+      <div class="capture-wrap" id="lt-capture-wrap"></div>
+      <button class="action-btn" id="lt-action-btn">Begin Capture</button>
+    </div>
+
+    <div class="analyzing-holder" id="lt-analyzing-holder" style="display:none"></div>
+
+    <button class="end-link" id="lt-end-link" style="margin-top:22px">End session</button>
+  </div>
+</section>
+
+<script>
+"use strict";
+
+/* ══════════════════════════════════════════════════════════════════════
+   SHARED — profile storage + screen navigation. Every screen below reads
+   and writes through these same two helpers instead of each keeping its
+   own copy, so there's exactly one source of truth for the subject list.
+   ══════════════════════════════════════════════════════════════════════ */
+const PROFILES_KEY = 'polygraph_profiles';
+const CURRENT_KEY = 'polygraph_current';
+
+function loadProfiles() {
+  try { return JSON.parse(localStorage.getItem(PROFILES_KEY)) || []; }
+  catch (e) { return []; }
+}
+
+function saveProfiles(list) {
+  localStorage.setItem(PROFILES_KEY, JSON.stringify(list));
+}
+
+// Run once when a screen becomes active — each screen registers into this
+// so re-entering a screen (e.g. going back to Profiles) always reflects
+// current state instead of whatever it looked like at page load.
+const screenEnterHandlers = {};
+
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  window.scrollTo(0, 0);
+  if (screenEnterHandlers[id]) screenEnterHandlers[id]();
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   SCREEN: landing
+   ══════════════════════════════════════════════════════════════════════ */
+document.getElementById('ld-start-btn').addEventListener('click', () => showScreen('screen-profiles'));
+
+/* ══════════════════════════════════════════════════════════════════════
+   SCREEN: profiles
+   ══════════════════════════════════════════════════════════════════════ */
+(function () {
+  function initials(name) {
+    const parts = name.trim().split(/\s+/);
+    const first = parts[0] ? parts[0][0] : '';
+    const last = parts.length > 1 ? parts[parts.length - 1][0] : '';
+    return (first + last).toUpperCase() || '?';
+  }
+
+  function formatDate(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
+
+  function renderProfiles() {
+    const profiles = loadProfiles();
+    const wrap = document.getElementById('pf-saved-wrap');
+    const empty = document.getElementById('pf-empty');
+    const list = document.getElementById('pf-profile-list');
+
+    if (profiles.length === 0) {
+      wrap.style.display = 'none';
+      empty.style.display = 'block';
+      return;
+    }
+
+    wrap.style.display = 'block';
+    empty.style.display = 'none';
+    list.innerHTML = '';
+
+    // Newest first.
+    profiles.slice().reverse().forEach(p => {
+      const card = document.createElement('div');
+      card.className = 'profile-card';
+      card.onclick = () => selectProfile(p.id);
+
+      const status = p.baseline
+        ? `<span class="status-dot done"></span>Baseline saved${p.baselineAt ? ' · ' + formatDate(p.baselineAt) : ''}`
+        : `<span class="status-dot pending"></span>No baseline yet`;
+
+      card.innerHTML = `
+        <div class="avatar">${initials(p.name)}</div>
+        <div class="profile-info">
+          <div class="profile-name">${p.name}</div>
+          <div class="profile-status">${status}</div>
+        </div>
+        <div class="chevron">&rsaquo;</div>
+      `;
+      list.appendChild(card);
+    });
+  }
+
+  function selectProfile(id) {
+    localStorage.setItem(CURRENT_KEY, id);
+    const p = loadProfiles().find(x => x.id === id);
+    // A profile that already has a baseline jumps straight to its confirmation;
+    // otherwise it heads into baseline setup.
+    showScreen((p && p.baseline) ? 'screen-baseline-saved' : 'screen-baseline-focus');
+  }
+
+  document.getElementById('pf-create-btn').addEventListener('click', () => showScreen('screen-profile-new'));
+
+  screenEnterHandlers['screen-profiles'] = renderProfiles;
+})();
+
+/* ══════════════════════════════════════════════════════════════════════
+   SCREEN: profile-new
+   ══════════════════════════════════════════════════════════════════════ */
+(function () {
+  const nameInput = document.getElementById('pn-subj-name');
+  const consent = document.getElementById('pn-consent');
+  const btn = document.getElementById('pn-next-btn');
+
+  function validate() {
+    btn.disabled = !(nameInput.value.trim() && consent.checked);
+  }
+
+  nameInput.addEventListener('input', validate);
+  consent.addEventListener('change', validate);
+
+  function setUpBaseline() {
+    if (btn.disabled) return;
+    const profiles = loadProfiles();
+    const profile = {
+      id: Date.now().toString(),
+      name: nameInput.value.trim(),
+      consent: true,
+      baseline: false,
+      created: new Date().toISOString()
+    };
+    profiles.push(profile);
+    saveProfiles(profiles);
+    localStorage.setItem(CURRENT_KEY, profile.id);
+    showScreen('screen-baseline-focus');
+  }
+
+  document.getElementById('pn-back-btn').addEventListener('click', () => showScreen('screen-profiles'));
+  btn.addEventListener('click', setUpBaseline);
+
+  // Fresh form each time this screen is (re-)entered.
+  screenEnterHandlers['screen-profile-new'] = function () {
+    nameInput.value = '';
+    consent.checked = false;
+    validate();
+  };
+})();
+
+/* ══════════════════════════════════════════════════════════════════════
+   SCREEN: baseline-focus — resting capture (hourglass timer + drifting dot)
+   ══════════════════════════════════════════════════════════════════════ */
+(function () {
+  const BASELINE_SECONDS = 120;
+  const topSand = document.getElementById('top-sand');
+  const bottomSand = document.getElementById('bottom-sand');
+  let progressAnim = null;
+  let grainAnim = null;
+  let pouring = false;
+  let pileY = 111;   // current top of the bottom pile (svg y) — grains land here
+
+  const NECK_Y = 60;         // centre of the neck in svg units
+  const CX = 38;             // hourglass centre-line
+  let flow = 1;              // how hard the neck is pouring, 1 → 0
+
+  // The level has to be solved from the AREA drained, not moved at a constant
+  // rate — the bulbs are wide at the caps and pinch at the neck, so a constant
+  // rate looks empty long before the clock is up. And the sides are beziers that
+  // hang near-vertical under the caps, so approximating them as a straight taper
+  // still under-counts the sand up top. Sampling the real curve is what finally
+  // lines the drain up with the clock.
+  function bez(p0, p1, p2, p3, t) {
+    const m = 1 - t;
+    return m*m*m*p0 + 3*m*m*t*p1 + 3*m*t*t*p2 + t*t*t*p3;
+  }
+
+  function buildProfile(xs, ys) {
+    const N = 300, pts = [], cum = [0];
+    for (let i = 0; i <= N; i++) {
+      const t = i / N;
+      pts.push({
+        y: bez(ys[0], ys[1], ys[2], ys[3], t),
+        w: 76 - 2 * bez(xs[0], xs[1], xs[2], xs[3], t)
+      });
+    }
+    for (let i = 1; i <= N; i++) {
+      const dy = Math.abs(pts[i].y - pts[i - 1].y);
+      cum.push(cum[i - 1] + dy * (pts[i].w + pts[i - 1].w) / 2);
+    }
+    return { pts, cum, total: cum[N] };
+  }
+
+  const TOP_PROFILE = buildProfile([11, 11, 35, 35], [8, 38, 46, 58]);
+  const BOT_PROFILE = buildProfile([35, 35, 11, 11], [62, 74, 82, 112]);
+
+  function levelAt(profile, occupied) {
+    const target = profile.total * (1 - occupied);
+    const cum = profile.cum;
+    let lo = 0, hi = cum.length - 1;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (cum[mid] < target) lo = mid + 1; else hi = mid; }
+    const i = Math.max(1, lo);
+    const c0 = cum[i - 1], c1 = cum[i];
+    const f = c1 > c0 ? (target - c0) / (c1 - c0) : 0;
+    return profile.pts[i - 1].y + (profile.pts[i].y - profile.pts[i - 1].y) * f;
+  }
+
+  function occupiedAtLevel(profile, y) {
+    const pts = profile.pts, cum = profile.cum;
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1].y, b = pts[i].y;
+      if ((y >= a && y <= b) || (y <= a && y >= b)) {
+        const f = b !== a ? (y - a) / (b - a) : 0;
+        return 1 - (cum[i - 1] + (cum[i] - cum[i - 1]) * f) / profile.total;
+      }
+    }
+    return y <= pts[0].y ? 1 : 0;
+  }
+
+  const START_Y = 13;
+  const START_REMAIN = occupiedAtLevel(TOP_PROFILE, START_Y);
+
+  const topLevel = remain => levelAt(TOP_PROFILE, remain);
+  const bottomLevel = filled => levelAt(BOT_PROFILE, filled);
+
+  let lastTopY = -1, lastBotY = -1;
+
+  function setHourglass(frac) {
+    const remain = START_REMAIN * (1 - frac);
+    const filled = START_REMAIN * frac;
+
+    const surfaceTop = topLevel(remain);
+    const surfaceBottom = bottomLevel(filled);
+
+    flow = Math.min(1, Math.max(0, remain / (0.25 * START_REMAIN)));
+    pileY = surfaceBottom;
+    pouring = frac > 0.005 && flow > 0.001;
+
+    if (Math.abs(surfaceTop - lastTopY) > 0.04) {
+      lastTopY = surfaceTop;
+      const dip = Math.min(5, frac * 9);
+      topSand.setAttribute('d',
+        `M0,${surfaceTop} Q${CX},${surfaceTop + dip * 2} 76,${surfaceTop} L76,59 L0,59 Z`
+      );
+    }
+
+    if (Math.abs(surfaceBottom - lastBotY) > 0.04) {
+      lastBotY = surfaceBottom;
+      const mound = Math.min(5, frac * 9);
+      bottomSand.setAttribute('d',
+        `M0,${surfaceBottom} Q${CX},${surfaceBottom - mound * 2} 76,${surfaceBottom} L76,114 L0,114 Z`
+      );
+    }
+  }
+
+  const GRAIN_COUNT = 9;
+  const GRAVITY = 200;
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  let grainParts = [];
+
+  function spawnGrain(p, scatter) {
+    p.x = CX + (Math.random() - 0.5) * 1.8;
+    p.y = scatter
+      ? NECK_Y + Math.random() * Math.max(4, pileY - NECK_Y)
+      : NECK_Y - 1 + Math.random() * 2;
+    p.vy = 5 + Math.random() * 18;
+    p.vx = (Math.random() - 0.5) * 5;
+    p.r = 0.85 + Math.random() * 0.85;
+    p.o = 0.5 + Math.random() * 0.5;
+    p.el.setAttribute('r', p.r.toFixed(2));
+    p.wait = flow > 0.02 ? (1 / flow - 1) * (0.04 + Math.random() * 0.22) : 1e9;
+  }
+
+  function buildGrains() {
+    const layer = document.getElementById('grain-layer');
+    layer.innerHTML = '';
+    grainParts = [];
+    for (let i = 0; i < GRAIN_COUNT; i++) {
+      const el = document.createElementNS(SVG_NS, 'circle');
+      el.setAttribute('class', 'grain');
+      layer.appendChild(el);
+      const p = { el };
+      spawnGrain(p, true);
+      grainParts.push(p);
+    }
+  }
+
+  function startGrains() {
+    buildGrains();
+    let last = performance.now();
+    function step(now) {
+      let dt = (now - last) / 1000;
+      last = now;
+      if (dt > 0.05) dt = 0.05;
+
+      grainParts.forEach(p => {
+        if (!pouring) { p.el.style.opacity = 0; return; }
+        if (p.wait > 0) { p.wait -= dt; p.el.style.opacity = 0; return; }
+
+        p.vy += GRAVITY * dt;
+        p.y += p.vy * dt;
+        p.x += p.vx * dt;
+
+        const maxOff = Math.min(26, Math.max(1.4, 3 + (p.y - 62) * 0.48));
+        if (p.x < CX - maxOff) { p.x = CX - maxOff; p.vx = Math.abs(p.vx) * 0.4; }
+        if (p.x > CX + maxOff) { p.x = CX + maxOff; p.vx = -Math.abs(p.vx) * 0.4; }
+
+        if (p.y >= pileY - 0.5) spawnGrain(p, false);
+
+        p.el.setAttribute('cx', p.x.toFixed(2));
+        p.el.setAttribute('cy', p.y.toFixed(2));
+        p.el.style.opacity = p.o.toFixed(2);
+      });
+
+      grainAnim = requestAnimationFrame(step);
+    }
+    grainAnim = requestAnimationFrame(step);
+  }
+
+  function stopGrains() {
+    if (grainAnim) cancelAnimationFrame(grainAnim);
+    grainAnim = null;
+    grainParts.forEach(p => p.el.style.opacity = 0);
+  }
+
+  // ~250 wpm average silent reading pace ≈ 24 chars/sec ≈ 42ms/char
+  const TYPE_MS = 42;
+
+  function typeInto(el, text, onDone) {
+    const cursor = document.createElement('span');
+    cursor.className = 'type-cursor';
+    cursor.textContent = '|';
+    el.appendChild(cursor);
+
+    const chars = text.split('');
+    let i = 0;
+    const step = () => {
+      const ch = chars[i];
+      if (ch === '\n') {
+        el.insertBefore(document.createElement('br'), cursor);
+      } else {
+        const span = document.createElement('span');
+        span.className = 'type-letter';
+        span.textContent = ch;
+        el.insertBefore(span, cursor);
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          span.classList.add('set');
+          setTimeout(() => span.classList.replace('set', 'dry'), 120);
+        }));
+      }
+      i++;
+      if (i < chars.length) {
+        setTimeout(step, TYPE_MS);
+      } else {
+        cursor.remove();
+        if (onDone) setTimeout(onDone, 400);
+      }
+    };
+    step();
+  }
+
+  function goToInstructions() {
+    document.getElementById('slide-welcome').style.display = 'none';
+    document.getElementById('slide-instructions').style.display = 'flex';
+    document.getElementById('dot1').classList.remove('active');
+    document.getElementById('dot2').classList.add('active');
+
+    typeInto(
+      document.getElementById('primary-text'),
+      'Sit still and breathe normally.\nLet your eyes rest on the dot.',
+      () => typeInto(
+        document.getElementById('secondary-text'),
+        "This will take about 2 minutes — we're getting a calm baseline reading before we begin.",
+        () => document.getElementById('continue-btn').classList.remove('hidden')
+      )
+    );
+  }
+
+  function beginFocus() {
+    document.getElementById('intro').style.display = 'none';
+    document.body.classList.add('breathing-bg');
+    document.getElementById('focus-dot').classList.add('breathing');
+    if (window.Polygraph) window.Polygraph.beginBaseline();   // start feeding the engine
+    startFocusDot();
+    startGrains();
+
+    const startTime = performance.now();
+    function progressTick(now) {
+      const frac = Math.min(1, (now - startTime) / (BASELINE_SECONDS * 1000));
+      setHourglass(frac);
+      if (frac >= 1) {
+        document.body.classList.remove('breathing-bg');
+        stopFocusDot();
+        showComplete();
+        return;
+      }
+      progressAnim = requestAnimationFrame(progressTick);
+    }
+    progressAnim = requestAnimationFrame(progressTick);
+  }
+
+  function showComplete() {
+    stopGrains();
+    document.getElementById('dot-wrap').style.display = 'none';
+    document.querySelectorAll('#screen-baseline-focus .wall-paddle').forEach(p => p.style.display = 'none');
+    document.getElementById('hourglass-wrap').style.display = 'none';
+    document.getElementById('complete').classList.add('visible');
+  }
+
+  function proceedFromBaseline() {
+    // Resting baseline captured — fold it into the engine's baseline model,
+    // then continue to the calibration questions.
+    if (window.Polygraph) window.Polygraph.finishBaseline();
+    showScreen('screen-baseline-questions');
+  }
+
+  function skipBaseline() {
+    document.getElementById('intro').style.display = 'none';
+    if (progressAnim) cancelAnimationFrame(progressAnim);
+    stopFocusDot();
+    stopGrains();
+    document.body.classList.remove('breathing-bg');
+    proceedFromBaseline();
+  }
+
+  // ── Drifting focus dot (DVD-style), roams the full screen — paddles on each
+  // wall track its position and light up as the contact point on collision ──
+  let focusAnim = null;
+  const paddleTop = document.getElementById('paddle-top');
+  const paddleBottom = document.getElementById('paddle-bottom');
+  const paddleLeft = document.getElementById('paddle-left');
+  const paddleRight = document.getElementById('paddle-right');
+  const PADDLE_LEN = 64;
+  const PADDLE_THICK = 8;
+
+  const HOURGLASS_HALF_W = 38;
+  const HOURGLASS_HALF_H = 60;
+  const HOURGLASS_BUFFER = 15;
+
+  const SERVO_SPEED = 420;
+  const MAX_SERVO_SPEED = 1600;
+
+  function makeServo(v) { return { cur: v, target: v, speed: SERVO_SPEED }; }
+
+  function stepServo(s, dt) {
+    const d = s.target - s.cur;
+    const max = s.speed * dt;
+    s.cur += Math.abs(d) <= max ? d : Math.sign(d) * max;
+    return s.cur;
+  }
+
+  function aim(s, target, timeAvailable) {
+    const need = Math.abs(target - s.cur) / Math.max(timeAvailable, 0.03) * 1.35;
+    s.speed = Math.min(MAX_SERVO_SPEED, Math.max(SERVO_SPEED, need));
+    s.target = target;
+  }
+
+  const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+
+  const hgPaddleTop = document.getElementById('hg-paddle-top');
+  const hgPaddleBottom = document.getElementById('hg-paddle-bottom');
+  const hgPaddleLeft = document.getElementById('hg-paddle-left');
+  const hgPaddleRight = document.getElementById('hg-paddle-right');
+
+  const HG_HALF_W = HOURGLASS_HALF_W + HOURGLASS_BUFFER;
+  const HG_HALF_H = HOURGLASS_HALF_H + HOURGLASS_BUFFER;
+  const HG_SOLID_W = HG_HALF_W + PADDLE_THICK;
+  const HG_SOLID_H = HG_HALF_H + PADDLE_THICK;
+  const HG_PADDLE_LEN = 44;
+
+  let sWallTop, sWallBottom, sWallLeft, sWallRight;
+  let sHgTop, sHgBottom, sHgLeft, sHgRight;
+
+  function restHourglassPaddles() {
+    const cx = window.innerWidth / 2, cy = window.innerHeight / 2;
+    hgPaddleTop.style.top = (cy - HG_HALF_H - PADDLE_THICK) + 'px';
+    hgPaddleBottom.style.top = (cy + HG_HALF_H) + 'px';
+    hgPaddleLeft.style.left = (cx - HG_HALF_W - PADDLE_THICK) + 'px';
+    hgPaddleRight.style.left = (cx + HG_HALF_W) + 'px';
+    hgPaddleTop.style.left = '0px';
+    hgPaddleBottom.style.left = '0px';
+    hgPaddleLeft.style.top = '0px';
+    hgPaddleRight.style.top = '0px';
+    sHgTop = makeServo(cx - HG_PADDLE_LEN / 2);
+    sHgBottom = makeServo(cx - HG_PADDLE_LEN / 2);
+    sHgLeft = makeServo(cy - HG_PADDLE_LEN / 2);
+    sHgRight = makeServo(cy - HG_PADDLE_LEN / 2);
+  }
+
+  function updateHourglassPaddles(dcx, dcy, vx, vy) {
+    const ocx = window.innerWidth / 2, ocy = window.innerHeight / 2;
+
+    sHgTop.target = sHgTop.cur;
+    sHgBottom.target = sHgBottom.cur;
+    sHgLeft.target = sHgLeft.cur;
+    sHgRight.target = sHgRight.cur;
+
+    const halfW = HG_SOLID_W + 17, halfH = HG_SOLID_H + 17;
+    const minX = ocx - halfW, maxX = ocx + halfW;
+    const minY = ocy - halfH, maxY = ocy + halfH;
+
+    let txmin, txmax;
+    if (vx !== 0) { const a = (minX - dcx) / vx, b = (maxX - dcx) / vx; txmin = Math.min(a, b); txmax = Math.max(a, b); }
+    else { if (dcx < minX || dcx > maxX) return false; txmin = -Infinity; txmax = Infinity; }
+
+    let tymin, tymax;
+    if (vy !== 0) { const a = (minY - dcy) / vy, b = (maxY - dcy) / vy; tymin = Math.min(a, b); tymax = Math.max(a, b); }
+    else { if (dcy < minY || dcy > maxY) return false; tymin = -Infinity; tymax = Infinity; }
+
+    const tEnter = Math.max(txmin, tymin);
+    const tExit = Math.min(txmax, tymax);
+    if (tEnter > tExit) return false;
+    if (tEnter <= 1e-3) return false;
+
+    const dh = 17;
+    const wMinX = PADDLE_THICK + dh, wMaxX = window.innerWidth - PADDLE_THICK - dh;
+    const wMinY = PADDLE_THICK + dh, wMaxY = window.innerHeight - PADDLE_THICK - dh;
+    const tWx = vx > 0 ? (wMaxX - dcx) / vx : vx < 0 ? (wMinX - dcx) / vx : Infinity;
+    const tWy = vy > 0 ? (wMaxY - dcy) / vy : vy < 0 ? (wMinY - dcy) / vy : Infinity;
+    if (tEnter > Math.min(tWx, tWy)) return false;
+
+    const ex = dcx + vx * tEnter - ocx, ey = dcy + vy * tEnter - ocy;
+    const cpx = clamp(ex, -HG_SOLID_W, HG_SOLID_W);
+    const cpy = clamp(ey, -HG_SOLID_H, HG_SOLID_H);
+
+    const atCornerX = Math.abs(cpx) > HG_HALF_W;
+    const atCornerY = Math.abs(cpy) > HG_HALF_H;
+
+    if (atCornerX && atCornerY) {
+      aim(cpy < 0 ? sHgTop : sHgBottom,
+          cpx < 0 ? ocx - HG_SOLID_W : ocx + HG_SOLID_W - HG_PADDLE_LEN, tEnter);
+      aim(cpx < 0 ? sHgLeft : sHgRight,
+          cpy < 0 ? ocy - HG_HALF_H  : ocy + HG_HALF_H  - HG_PADDLE_LEN, tEnter);
+      return true;
+    }
+
+    if (atCornerY) {
+      const px = clamp(ocx + cpx - HG_PADDLE_LEN / 2, ocx - HG_SOLID_W, ocx + HG_SOLID_W - HG_PADDLE_LEN);
+      aim(cpy < 0 ? sHgTop : sHgBottom, px, tEnter);
+    } else {
+      const py = clamp(ocy + cpy - HG_PADDLE_LEN / 2, ocy - HG_HALF_H, ocy + HG_HALF_H - HG_PADDLE_LEN);
+      aim(cpx < 0 ? sHgLeft : sHgRight, py, tEnter);
+    }
+    return true;
+  }
+
+  function applyServos(dt) {
+    paddleTop.style.transform    = `translate3d(${stepServo(sWallTop, dt)}px,0,0)`;
+    paddleBottom.style.transform = `translate3d(${stepServo(sWallBottom, dt)}px,0,0)`;
+    paddleLeft.style.transform   = `translate3d(0,${stepServo(sWallLeft, dt)}px,0)`;
+    paddleRight.style.transform  = `translate3d(0,${stepServo(sWallRight, dt)}px,0)`;
+    hgPaddleTop.style.transform    = `translate3d(${stepServo(sHgTop, dt)}px,0,0)`;
+    hgPaddleBottom.style.transform = `translate3d(${stepServo(sHgBottom, dt)}px,0,0)`;
+    hgPaddleLeft.style.transform   = `translate3d(0,${stepServo(sHgLeft, dt)}px,0)`;
+    hgPaddleRight.style.transform  = `translate3d(0,${stepServo(sHgRight, dt)}px,0)`;
+  }
+
+  function startFocusDot() {
+    const dotWrap = document.getElementById('dot-wrap');
+    const dotSize = 34;
+    const boxW = window.innerWidth;
+    const boxH = window.innerHeight;
+
+    restHourglassPaddles();
+
+    let x, y;
+    do {
+      x = Math.random() * (boxW - dotSize);
+      y = Math.random() * (boxH - dotSize);
+    } while (
+      Math.abs(x + dotSize / 2 - boxW / 2) < HOURGLASS_HALF_W + HOURGLASS_BUFFER + dotSize / 2 &&
+      Math.abs(y + dotSize / 2 - boxH / 2) < HOURGLASS_HALF_H + HOURGLASS_BUFFER + dotSize / 2
+    );
+    const speed = 115;
+    const angle = Math.random() * Math.PI * 2;
+    let vx = Math.cos(angle) * speed;
+    let vy = Math.sin(angle) * speed;
+
+    const restX = boxW / 2 - PADDLE_LEN / 2;
+    const restY = boxH / 2 - PADDLE_LEN / 2;
+    sWallTop = makeServo(restX);
+    sWallBottom = makeServo(restX);
+    sWallLeft = makeServo(restY);
+    sWallRight = makeServo(restY);
+
+    function bounce() {
+      const a = (Math.random() - 0.5) * 0.30;
+      const c = Math.cos(a), sn = Math.sin(a);
+      let nvx = vx * c - vy * sn;
+      let nvy = vx * sn + vy * c;
+
+      let s = Math.hypot(nvx, nvy) || 1;
+      const MIN_COMP = 0.26;
+      if (Math.abs(nvx) < s * MIN_COMP) nvx = (nvx < 0 ? -1 : 1) * s * MIN_COMP;
+      if (Math.abs(nvy) < s * MIN_COMP) nvy = (nvy < 0 ? -1 : 1) * s * MIN_COMP;
+
+      s = Math.hypot(nvx, nvy) || 1;
+      vx = nvx / s * speed;
+      vy = nvy / s * speed;
+    }
+
+    let last = performance.now();
+    function tick(now) {
+      let dt = (now - last) / 1000;
+      last = now;
+      if (dt > 0.05) dt = 0.05;
+
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+
+      const minX = PADDLE_THICK, maxX = w - dotSize - PADDLE_THICK;
+      const minY = PADDLE_THICK, maxY = h - dotSize - PADDLE_THICK;
+      const ocx = w / 2, ocy = h / 2;
+      const dotHalf = dotSize / 2;
+
+      const dist = Math.sqrt(vx * vx + vy * vy) * dt;
+      const steps = Math.max(1, Math.ceil(dist / 6));
+      const sdt = dt / steps;
+      for (let s = 0; s < steps; s++) {
+        x += vx * sdt;
+        y += vy * sdt;
+
+        if (x <= minX) { x = minX; vx = Math.abs(vx); bounce(); }
+        if (x >= maxX) { x = maxX; vx = -Math.abs(vx); bounce(); }
+        if (y <= minY) { y = minY; vy = Math.abs(vy); bounce(); }
+        if (y >= maxY) { y = maxY; vy = -Math.abs(vy); bounce(); }
+
+        const ddx = (x + dotHalf) - ocx, ddy = (y + dotHalf) - ocy;
+        if (Math.abs(ddx) < HG_SOLID_W && Math.abs(ddy) < HG_SOLID_H) {
+          const ox = HG_SOLID_W - Math.abs(ddx) + dotHalf;
+          const oy = HG_SOLID_H - Math.abs(ddy) + dotHalf;
+          if (ox < oy) { x += ddx > 0 ? ox : -ox; vx = ddx > 0 ? Math.abs(vx) : -Math.abs(vx); }
+          else         { y += ddy > 0 ? oy : -oy; vy = ddy > 0 ? Math.abs(vy) : -Math.abs(vy); }
+          bounce();
+        } else {
+          const rx = Math.min(Math.max(ddx, -HG_SOLID_W), HG_SOLID_W);
+          const ry = Math.min(Math.max(ddy, -HG_SOLID_H), HG_SOLID_H);
+          const nx = ddx - rx, ny = ddy - ry;
+          const d2 = nx * nx + ny * ny;
+          if (d2 < dotHalf * dotHalf) {
+            const d = Math.sqrt(d2) || 1e-4;
+            const ux = nx / d, uy = ny / d;
+            x += ux * (dotHalf - d);
+            y += uy * (dotHalf - d);
+            const vn = vx * ux + vy * uy;
+            if (vn < 0) { vx -= 2 * vn * ux; vy -= 2 * vn * uy; }
+            bounce();
+          }
+        }
+      }
+
+      dotWrap.style.transform = `translate3d(${x}px,${y}px,0)`;
+
+      const dcx = x + dotSize / 2, dcy = y + dotSize / 2;
+
+      const hgEngaged = updateHourglassPaddles(dcx, dcy, vx, vy);
+
+      sWallTop.target = sWallTop.cur;
+      sWallBottom.target = sWallBottom.cur;
+      sWallLeft.target = sWallLeft.cur;
+      sWallRight.target = sWallRight.cur;
+
+      if (!hgEngaged) {
+        const tRight  = vx > 0 ? (maxX - x) / vx : Infinity;
+        const tLeft   = vx < 0 ? (x - minX) / -vx : Infinity;
+        const tBottom = vy > 0 ? (maxY - y) / vy : Infinity;
+        const tTop    = vy < 0 ? (y - minY) / -vy : Infinity;
+        const minT = Math.min(tRight, tLeft, tBottom, tTop);
+
+        const cx = clamp(dcx - PADDLE_LEN / 2, 0, w - PADDLE_LEN);
+        const cy = clamp(dcy - PADDLE_LEN / 2, 0, h - PADDLE_LEN);
+
+        if (minT === tTop) {
+          aim(sWallTop, cx, minT);
+        } else if (minT === tBottom) {
+          aim(sWallBottom, cx, minT);
+        } else if (minT === tLeft) {
+          aim(sWallLeft, cy, minT);
+        } else {
+          aim(sWallRight, cy, minT);
+        }
+      }
+
+      applyServos(dt);
+
+      focusAnim = requestAnimationFrame(tick);
+    }
+    focusAnim = requestAnimationFrame(tick);
+  }
+
+  function stopFocusDot() {
+    if (focusAnim) cancelAnimationFrame(focusAnim);
+    focusAnim = null;
+  }
+
+  // Return the intro to the Welcome slide and reset all machinery — run every
+  // time this screen is (re-)entered, since a subject may pass through the
+  // baseline flow more than once across a demo session.
+  function initBaselineFocus() {
+    if (progressAnim) cancelAnimationFrame(progressAnim);
+    stopFocusDot();
+    stopGrains();
+    document.body.classList.remove('breathing-bg');
+
+    const intro = document.getElementById('intro');
+    intro.style.display = 'flex';
+    document.getElementById('slide-welcome').style.display = 'flex';
+    document.getElementById('slide-instructions').style.display = 'none';
+    document.getElementById('primary-text').innerHTML = '';
+    document.getElementById('secondary-text').innerHTML = '';
+    document.getElementById('continue-btn').classList.add('hidden');
+    document.getElementById('dot1').classList.add('active');
+    document.getElementById('dot2').classList.remove('active');
+
+    document.getElementById('complete').classList.remove('visible');
+    document.getElementById('dot-wrap').style.display = '';
+    document.querySelectorAll('#screen-baseline-focus .wall-paddle').forEach(p => p.style.display = '');
+    document.getElementById('hourglass-wrap').style.display = '';
+    document.getElementById('focus-dot').classList.remove('breathing');
+
+    lastTopY = -1;
+    lastBotY = -1;
+  }
+
+  document.getElementById('bf-welcome-next').addEventListener('click', goToInstructions);
+  document.getElementById('continue-btn').addEventListener('click', beginFocus);
+  document.getElementById('bf-proceed-btn').addEventListener('click', proceedFromBaseline);
+  document.getElementById('bf-skip-btn').addEventListener('click', skipBaseline);
+
+  screenEnterHandlers['screen-baseline-focus'] = initBaselineFocus;
+})();
+
+/* ══════════════════════════════════════════════════════════════════════
+   SCREEN: baseline-questions
+   ══════════════════════════════════════════════════════════════════════ */
+(function () {
+  const QUESTIONS = [
+    "Is two plus two equal to four?",
+    "Is ice cold?",
+    "Do fish live in water?",
+    "Is ten greater than five?",
+    "Are you currently sitting in this room?"
+  ];
+
+  const CAPTURE_MIN_MS = 6000;
+
+  let idx = 0;
+  let capturing = false;
+
+  function renderDots() {
+    const wrap = document.getElementById('bq-dots');
+    wrap.innerHTML = '';
+    QUESTIONS.forEach((_, i) => {
+      const d = document.createElement('div');
+      d.className = 'bq-dot' + (i === idx ? ' active' : i < idx ? ' done' : '');
+      wrap.appendChild(d);
+    });
+  }
+
+  function renderQuestion() {
+    renderDots();
+    const textEl = document.getElementById('bq-question-text');
+    const btn = document.getElementById('bq-next-btn');
+    document.getElementById('bq-capture-wrap').innerHTML = '';
+
+    if (idx < QUESTIONS.length) {
+      textEl.textContent = QUESTIONS[idx];
+      btn.textContent = idx === QUESTIONS.length - 1 ? 'Finish' : 'Next';
+      btn.disabled = false;
+      btn.onclick = nextQuestion;
+    } else {
+      textEl.innerHTML = '<span class="done-msg">Baseline questions complete.</span>';
+      // Full baseline (resting + calibration) is now captured — persist it.
+      markBaselineComplete();
+      btn.style.display = '';
+      btn.disabled = false;
+      btn.textContent = 'Continue';
+      btn.onclick = () => showScreen('screen-baseline-saved');
+    }
+  }
+
+  function markBaselineComplete() {
+    const id = localStorage.getItem(CURRENT_KEY);
+    const list = loadProfiles();
+    const p = list.find(x => x.id === id);
+    if (p) {
+      p.baseline = true;
+      p.baselineAt = new Date().toISOString();
+      saveProfiles(list);
+    }
+  }
+
+  function startCapture(onDone) {
+    capturing = true;
+    const btn = document.getElementById('bq-next-btn');
+    const captureWrap = document.getElementById('bq-capture-wrap');
+    btn.disabled = true;
+    captureWrap.innerHTML = '<div class="capture-label"><span class="capture-dot"></span>Capturing response…</div>';
+
+    // Enforce a minimum window, then let the examiner decide when the
+    // response has settled instead of cutting it off on a fixed timer.
+    setTimeout(() => {
+      captureWrap.innerHTML = '<div class="capture-label"><span class="capture-dot"></span>Capturing response…</div>';
+      btn.disabled = false;
+      btn.textContent = 'Response Settled';
+      btn.onclick = () => {
+        capturing = false;
+        btn.onclick = nextQuestion;
+        onDone();
+      };
+    }, CAPTURE_MIN_MS);
+  }
+
+  function nextQuestion() {
+    if (capturing || idx >= QUESTIONS.length) return;
+    startCapture(() => {
+      idx++;
+      renderQuestion();
+    });
+  }
+
+  function skipQuestions() {
+    capturing = false;
+    idx = QUESTIONS.length;
+    renderQuestion();
+  }
+
+  document.getElementById('bq-skip-btn').addEventListener('click', skipQuestions);
+
+  screenEnterHandlers['screen-baseline-questions'] = function () {
+    idx = 0;
+    capturing = false;
+    const id = localStorage.getItem(CURRENT_KEY);
+    const p = loadProfiles().find(x => x.id === id);
+    document.getElementById('bq-eyebrow').textContent = 'Baseline Questions' + (p ? ' · ' + p.name : '');
+    renderQuestion();
+  };
+})();
+
+/* ══════════════════════════════════════════════════════════════════════
+   SCREEN: baseline-saved
+   ══════════════════════════════════════════════════════════════════════ */
+(function () {
+  document.getElementById('bs-begin-test').addEventListener('click', () => showScreen('screen-live-test'));
+  document.getElementById('bs-back-profiles').addEventListener('click', () => showScreen('screen-profiles'));
+
+  screenEnterHandlers['screen-baseline-saved'] = function () {
+    const id = localStorage.getItem(CURRENT_KEY);
+    const p = loadProfiles().find(x => x.id === id);
+    document.getElementById('bs-who').textContent = p ? p.name : '';
+  };
+})();
+
+/* ══════════════════════════════════════════════════════════════════════
+   SCREEN: live-test
+   ══════════════════════════════════════════════════════════════════════ */
+(function () {
+  const CAPTURE_MIN_MS = 6000;
+  // Minimum time the "Analyzing" loader is shown before a determination appears —
+  // one full typewriter cycle. Deliberately held even if the (placeholder) result
+  // is instant, so the outcome doesn't feel glib.
+  const ANALYZING_MIN_MS = 5000;
+
+  // Placeholder only — no real signal wired in yet, so the outcome is picked at
+  // random just to exercise the three result states.
+  const OUTCOMES = [
+    { label: 'Truthful', badge: 'result-truthful', glow: 'glow-truthful' },
+    { label: 'Deceptive', badge: 'result-deceptive', glow: 'glow-deceptive' },
+    { label: 'Inconclusive', badge: 'result-inconclusive', glow: 'glow-inconclusive' }
+  ];
+
+  const GRID_PATH = [4, 1, 0, 3, 6, 7, 8, 5, 2, 1, 4, 7, 6, 3, 0, 1, 2, 5, 8, 7, 4];
+  const WORD = 'Analyzing';
+  const ANALYZING_TYPE_MS = 140, ERASE_MS = 55, HOLD_MS = 3000;
+  let gridTimer = null;
+  let analyzingActive = false;
+
+  let vitalsTimer = null;
+  function startVitals() {
+    stopVitals();
+    const el = document.getElementById('lt-vitals');
+    vitalsTimer = setInterval(() => {
+      const v = window.Polygraph && window.Polygraph.vitals();
+      if (!v) { el.textContent = ''; return; }
+      const hr = Number.isFinite(v.hr) ? Math.round(v.hr) + ' bpm' : '– bpm';
+      const q = v.sqi > 0.6 ? 'good' : v.sqi > 0.4 ? 'fair' : 'poor';
+      el.textContent = `♥ ${hr}   ·   EDA ${Math.round(v.scl)}   ·   signal ${q}`;
+    }, 400);
+  }
+  function stopVitals() { if (vitalsTimer) clearInterval(vitalsTimer); vitalsTimer = null; }
+
+  function beginCapture() {
+    const captureWrap = document.getElementById('lt-capture-wrap');
+    const btn = document.getElementById('lt-action-btn');
+
+    if (window.Polygraph) window.Polygraph.startResponse();   // mark window start
+    startVitals();
+
+    btn.disabled = true;
+    captureWrap.innerHTML = '<div class="capture-label"><span class="capture-dot"></span>Capturing response…</div>';
+
+    setTimeout(() => {
+      btn.disabled = false;
+      btn.textContent = 'Response Settled';
+      btn.onclick = startAnalyzing;
+    }, CAPTURE_MIN_MS);
+  }
+
+  function startAnalyzing() {
+    const card = document.getElementById('lt-card');
+    const holder = document.getElementById('lt-analyzing-holder');
+    card.style.display = 'none';
+    holder.style.display = 'flex';
+
+    const dots = Array.from({ length: 9 }, () => '<div class="grid-dot"></div>').join('');
+    holder.innerHTML = `
+      <div class="analyzing-grid-box" id="lt-grid-box">${dots}</div>
+      <div class="analyzing-label"><span id="lt-type-text"></span><span class="cursor">|</span></div>
+    `;
+
+    const dotEls = holder.querySelectorAll('#lt-grid-box .grid-dot');
+    let step = 0;
+    gridTimer = setInterval(() => {
+      dotEls.forEach(d => d.classList.remove('lit', 'lit-2', 'lit-3'));
+      const cur = GRID_PATH[step % GRID_PATH.length];
+      const prev = GRID_PATH[(step - 1 + GRID_PATH.length) % GRID_PATH.length];
+      const prev2 = GRID_PATH[(step - 2 + GRID_PATH.length) % GRID_PATH.length];
+      if (step >= 2 && prev2 !== cur && prev2 !== prev) dotEls[prev2].classList.add('lit-3');
+      if (step >= 1 && prev !== cur) dotEls[prev].classList.add('lit-2');
+      dotEls[cur].classList.add('lit');
+      step++;
+    }, 200);
+
+    // Compute the real determination now (at "Response Settled"); the loader
+    // just holds the minimum labour-illusion time before revealing it.
+    stopVitals();
+    if (window.Polygraph) window.Polygraph.finishResponse();
+
+    analyzingActive = true;
+    typewriterLoop(holder.querySelector('#lt-type-text'));
+
+    setTimeout(showResult, ANALYZING_MIN_MS);
+  }
+
+  function typewriterLoop(typeEl) {
+    typeEl.innerHTML = '';
+    let i = 0;
+    const typeStep = () => {
+      if (!analyzingActive) return;
+      const span = document.createElement('span');
+      span.className = 'letter';
+      span.textContent = WORD[i];
+      typeEl.appendChild(span);
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        span.classList.add('set');
+        setTimeout(() => span.classList.replace('set', 'dry'), 120);
+      }));
+      i++;
+      if (i < WORD.length) setTimeout(typeStep, ANALYZING_TYPE_MS);
+      else setTimeout(eraseStep, HOLD_MS);
+    };
+    const eraseStep = () => {
+      if (!analyzingActive) return;
+      if (typeEl.lastChild) {
+        typeEl.removeChild(typeEl.lastChild);
+        setTimeout(eraseStep, ERASE_MS);
+      } else {
+        setTimeout(() => typewriterLoop(typeEl), 300);
+      }
+    };
+    typeStep();
+  }
+
+  function stopAnalyzing() {
+    analyzingActive = false;
+    clearInterval(gridTimer);
+    const holder = document.getElementById('lt-analyzing-holder');
+    holder.style.display = 'none';
+    holder.innerHTML = '';
+  }
+
+  function renderResult() {
+    // Use the engine's real determination; fall back only if it's unavailable.
+    const res = (window.Polygraph && window.Polygraph.lastResult) || null;
+    const label = res ? res.label : 'Inconclusive';
+    const outcome = OUTCOMES.find(o => o.label === label) || OUTCOMES[2];
+    const conf = res ? Math.round(res.confidence * 100) : null;
+    const card = document.getElementById('lt-card');
+    card.style.display = 'flex';
+    card.className = 'card ' + outcome.glow;
+    card.innerHTML = `
+      <div class="result-badge ${outcome.badge}">${outcome.label}</div>
+      ${conf != null ? `<div class="subject" style="margin:-14px 0 22px">confidence ${conf}%</div>` : ''}
+      <button class="again-btn" id="lt-again-btn">Run Again</button>
+    `;
+    document.getElementById('lt-again-btn').addEventListener('click', reset);
+  }
+
+  function showResult() {
+    if (!analyzingActive) return; // guard against a double-fire
+    stopAnalyzing();
+    renderResult();
+  }
+
+  function reset() {
+    stopVitals();
+    const card = document.getElementById('lt-card');
+    card.style.display = 'flex';
+    card.className = 'card';
+    card.innerHTML = `
+      <div class="capture-wrap" id="lt-capture-wrap"></div>
+      <button class="action-btn" id="lt-action-btn">Begin Capture</button>
+    `;
+    document.getElementById('lt-action-btn').addEventListener('click', beginCapture);
+    const v = document.getElementById('lt-vitals'); if (v) v.textContent = '';
+  }
+
+  function endSession() {
+    stopVitals();
+    showScreen('screen-profiles');
+  }
+
+  // ── Demo-only: force a determination immediately, from any state ──
+  function skipToResult() {
+    stopVitals();
+    analyzingActive = false;
+    clearInterval(gridTimer);
+    const holder = document.getElementById('lt-analyzing-holder');
+    holder.style.display = 'none';
+    holder.innerHTML = '';
+    if (window.Polygraph) window.Polygraph.finishResponse();   // score whatever is buffered
+    renderResult();
+  }
+
+  document.getElementById('lt-action-btn').addEventListener('click', beginCapture);
+  document.getElementById('lt-end-link').addEventListener('click', endSession);
+  document.getElementById('lt-skip-btn').addEventListener('click', skipToResult);
+  document.getElementById('lt-react-btn').addEventListener('click', () => {
+    if (window.Polygraph) window.Polygraph.react();
+    const b = document.getElementById('lt-react-btn');
+    b.textContent = '⚡ reacting…'; setTimeout(() => b.textContent = '⚡ Simulate reaction (demo)', 4500);
+  });
+
+  screenEnterHandlers['screen-live-test'] = function () {
+    reset();
+    if (window.Polygraph) window.Polygraph.ensureStarted();
+    // The demo react button only makes sense against the synthetic subject.
+    document.getElementById('lt-react-btn').style.display =
+      (window.Polygraph && window.Polygraph.isDemo) ? '' : 'none';
+    const id = localStorage.getItem(CURRENT_KEY);
+    const p = loadProfiles().find(x => x.id === id);
+    document.getElementById('lt-subject').textContent = p ? p.name : '';
+  };
+})();
+</script>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     BACKEND BRIDGE — owns the analysis engine + sample source, exposed to
+     the screen controllers above as window.Polygraph. Data source is the
+     DemoSource by default; append ?ws=ws://192.168.4.1/ws to use real
+     ESP32 hardware.
+     ════════════════════════════════════════════════════════════════════ -->
+<script type="module">
+import { PolygraphEngine } from './polygraph_engine.js';
+import { makeSource } from './polygraph_source.js';
+
+const engine = new PolygraphEngine();
+const wsParam = new URLSearchParams(location.search).get('ws');
+const isDemo = !wsParam;
+const source = makeSource(wsParam || 'demo');
+
+let started = false, baselineStartT = null, respStart = null;
+
+const Polygraph = {
+  engine, isDemo, lastResult: null,
+
+  // Lazily begin streaming samples into the engine. Idempotent.
+  ensureStarted() {
+    if (started) return;
+    started = true;
+    source.connect((t, gsr, ir) => engine.ingest(t, gsr, ir), () => {});
+    if (isDemo) source.startRealtime();
+  },
+
+  beginBaseline() {
+    this.ensureStarted();
+    baselineStartT = engine.latestMs;
+    engine.beginBaseline();
+  },
+
+  // Close out the baseline. In demo, guarantee a full 2-min span by bursting
+  // any shortfall instantly (so skipping the wait still yields a real model).
+  finishBaseline() {
+    this.ensureStarted();
+    if (baselineStartT == null) { baselineStartT = engine.latestMs; engine.beginBaseline(); }
+    if (isDemo) {
+      const spanS = (engine.latestMs - baselineStartT) / 1000;
+      if (spanS < 120) source.burst(120 - spanS, { arousal: 0.06 });
+    }
+    const summary = engine.endBaseline();
+    baselineStartT = null;
+    return summary;
+  },
+
+  startResponse() { this.ensureStarted(); respStart = engine.latestMs; },
+
+  finishResponse() {
+    const end = engine.latestMs;
+    const start = respStart != null ? respStart : end - engine.cfg.windowSec * 1000;
+    const r = engine.scoreResponse(start, end);
+    this.lastResult = r;
+    respStart = null;
+    return r;
+  },
+
+  vitals() { return engine.liveVitals(); },
+
+  // Demo affordance: make the synthetic subject react so the next capture reads
+  // Deceptive. No-op on real hardware.
+  react() { if (isDemo && source.reactNow) source.reactNow(); },
+
+  end() { source.disconnect(); started = false; baselineStartT = null; respStart = null; engine.reset(); },
+};
+
+window.Polygraph = Polygraph;
+</script>
+
+</body>
+</html>

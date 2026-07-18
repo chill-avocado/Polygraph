@@ -3,9 +3,30 @@
  * ──────────────────────────────────────────────
  * Creates its own WiFi AP ("BioMonitor" / "sensor123").
  * Serves the full processing dashboard at http://192.168.4.1/
- * Streams raw sensor CSV via WebSocket at ws://192.168.4.1/ws
+ * Streams RAW sensor CSV via WebSocket at ws://192.168.4.1/ws
  * All signal processing (HR, HRV, SpO2, GSR, SQI, Polygraph)
  * runs in the browser — no host computer required.
+ *
+ * ── Wire format (PINNED CONTRACT — the frontend parses exactly this) ──
+ *   Each WebSocket TEXT frame carries one OR MORE newline-separated lines.
+ *   Each line is EXACTLY:   t,gsr,ir,red\n
+ *     t   = millis()                    (unsigned long, monotonic ms)
+ *     gsr = raw GSR ADC on GPIO34       (int, 0..4095)
+ *     ir  = raw IR count   (MAX30105)   (unsigned, integer)
+ *     red = raw RED count  (MAX30105)   (unsigned, integer)
+ *   Column order is fixed: t, then gsr, then ir, then red.
+ *   Values are RAW — no on-device filtering. The browser engine does all of
+ *   its own filtering; an on-device EMA lowpass would attenuate the pulse, so
+ *   none is applied here (the former alpha=0.20 EMA has been removed).
+ *
+ * ── Streaming behavior ──
+ *   Sampled at 100 Hz (PERIOD_MS=10). Rather than sending one frame per sample
+ *   (100 frames/s floods AsyncWebSocket), samples are BATCHED into a text
+ *   buffer and flushed as a single ws.textAll() about every 50 ms
+ *   (~5 samples/frame). The buffer also flushes early if it would overflow.
+ *   Sends are skipped when there are no clients (ws.count()==0) or when the
+ *   client TX queue is saturated (ws.availableForWriteAll()==false); in the
+ *   saturated case the pending batch is dropped. The stream task never blocks.
  *
  * Hardware:
  *   MAX30105 PPG sensor  →  I2C  SDA=21  SCL=22
@@ -28,7 +49,6 @@ static const char*   AP_SSID    = "BioMonitor";
 static const char*   AP_PASS    = "sensor123";
 static const uint8_t AP_CHANNEL = 6;
 static const gpio_num_t GSR_PIN = GPIO_NUM_34;
-static const float   EMA_ALPHA  = 0.20f;
 static const uint32_t PERIOD_MS = 10;   // 100 Hz target
 
 // ─── Globals ───────────────────────────────────────────────────────────────────
@@ -37,10 +57,6 @@ static AsyncWebServer    httpServer(80);
 static AsyncWebSocket    ws("/ws");
 static bool              sensorOK = false;
 
-// EMA state
-static float s_irF = 0, s_redF = 0, s_gsrF = 0;
-static bool  s_first = true;
-
 // ─── WebSocket event handler ───────────────────────────────────────────────────
 static void onWsEvent(AsyncWebSocket*, AsyncWebSocketClient* c,
                       AwsEventType type, void*, uint8_t*, size_t) {
@@ -48,43 +64,66 @@ static void onWsEvent(AsyncWebSocket*, AsyncWebSocketClient* c,
     else if (type == WS_EVT_DISCONNECT) Serial.printf("[WS] -client %u\n", c->id());
 }
 
+// ─── Batch flush — non-blocking, honors backpressure ──────────────────────────
+// Enqueue the accumulated CSV batch as a single TEXT frame. Silently drops the
+// batch (never blocks) if there are no clients or if any client's TX queue is
+// saturated, so the 100 Hz stream task always keeps its cadence.
+static inline void flushBatch(const char* data, size_t len) {
+    if (len == 0)                    return;
+    if (ws.count() == 0)             return;   // no listeners
+    if (!ws.availableForWriteAll())  return;   // client queue full → drop, don't block
+    ws.textAll(data, len);
+}
+
 // ─── Stream task — Core 1 ─────────────────────────────────────────────────────
 static void streamTask(void*) {
-    TickType_t       last  = xTaskGetTickCount();
+    TickType_t       last   = xTaskGetTickCount();
     const TickType_t period = pdMS_TO_TICKS(PERIOD_MS);
-    char             buf[96];
+
+    // Batch buffer: accumulate several "t,gsr,ir,red\n" lines, flush as one
+    // frame ~every 50 ms. Kept static (off the 4 KB task stack).
+    static char   batch[512];
+    size_t        used           = 0;   // bytes currently in batch
+    uint8_t       inBatch         = 0;   // samples currently in batch
+    const uint8_t FLUSH_SAMPLES   = 5;   // 5 samples * 10 ms ≈ 50 ms per frame
+    char          line[48];              // one CSV line (worst case < 40 bytes)
 
     for (;;) {
         vTaskDelayUntil(&last, period);
-        if (ws.count() == 0) continue;
 
-        int32_t irRaw = 0, redRaw = 0, gsrRaw = 0;
+        // No clients: hold cadence, keep the batch empty.
+        if (ws.count() == 0) { used = 0; inBatch = 0; continue; }
 
+        // ── sample RAW values ──
+        unsigned long ir = 0, red = 0;
         if (sensorOK) {
             sensor.check();
-            irRaw  = (int32_t)sensor.getIR();
-            redRaw = (int32_t)sensor.getRed();
+            ir  = (unsigned long)sensor.getIR();
+            red = (unsigned long)sensor.getRed();
         }
-        gsrRaw = (int32_t)analogRead(GSR_PIN);
+        unsigned int gsr = (unsigned int)analogRead(GSR_PIN);   // 0..4095
 
-        if (s_first) {
-            s_irF = irRaw; s_redF = redRaw; s_gsrF = gsrRaw;
-            s_first = false;
-        } else {
-            s_irF  = EMA_ALPHA * irRaw  + (1.0f - EMA_ALPHA) * s_irF;
-            s_redF = EMA_ALPHA * redRaw + (1.0f - EMA_ALPHA) * s_redF;
-            s_gsrF = EMA_ALPHA * gsrRaw + (1.0f - EMA_ALPHA) * s_gsrF;
+        // ── format one line:  t,gsr,ir,red\n ──
+        int n = snprintf(line, sizeof(line), "%lu,%u,%lu,%lu\n",
+                         (unsigned long)millis(), gsr, ir, red);
+        if (n <= 0) continue;
+        if (n >= (int)sizeof(line)) n = (int)sizeof(line) - 1;   // truncation guard
+
+        // ── overflow guard: flush before appending if it wouldn't fit ──
+        if (used + (size_t)n >= sizeof(batch)) {
+            flushBatch(batch, used);
+            used = 0; inBatch = 0;
         }
 
-        int len = snprintf(buf, sizeof(buf),
-            "%lu,%ld,%.1f,%ld,%.1f,%ld,%.1f\n",
-            (unsigned long)millis(),
-            (long)irRaw,  s_irF,
-            (long)redRaw, s_redF,
-            (long)gsrRaw, s_gsrF);
+        memcpy(batch + used, line, (size_t)n);
+        used   += (size_t)n;
+        inBatch++;
 
-        if (len > 0 && len < (int)sizeof(buf))
-            ws.textAll(buf, (size_t)len);
+        // ── time-based flush (~50 ms cadence) ──
+        if (inBatch >= FLUSH_SAMPLES) {
+            flushBatch(batch, used);
+            used = 0; inBatch = 0;
+        }
     }
 }
 
@@ -111,10 +150,6 @@ void setup() {
         );
         sensor.setPulseAmplitudeRed(0x3C);
         sensor.setPulseAmplitudeIR(0x3C);
-        sensor.check();
-        s_irF  = (float)sensor.getIR();
-        s_redF = (float)sensor.getRed();
-        s_first = false;
         sensorOK = true;
         Serial.println("[Sensor] MAX30105 OK");
     } else {

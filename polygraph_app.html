@@ -927,9 +927,129 @@ body.breathing-bg #screen-baseline-focus #hue {
 
 #screen-live-test .analyzing-label .letter.set { color: #ea9b4e; }
 #screen-live-test .analyzing-label .letter.dry { color: #a89a8c; }
+
+/* ══════════════════════════════════════════════════════════════════════
+   Backend-wiring additions: connection-status pill, live-vitals readout,
+   and the expanded result panel. Global (status pill + shared vitals inner
+   styling) first, then per-screen containers scoped under their #screen-xxx.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* ── Connection status pill (fixed, top-left; skip buttons live top-right) ── */
+.conn-status {
+  position: fixed;
+  top: 14px;
+  left: 14px;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #fdfaf4;
+  border: 1px solid #ecdfd2;
+  color: #8a7c70;
+  font-family: Arial, sans-serif;
+  font-size: .72rem;
+  letter-spacing: 0.03em;
+  padding: 6px 12px;
+  border-radius: 999px;
+  box-shadow: 0 2px 8px rgba(150,120,100,0.08);
+  pointer-events: none;
+}
+.conn-status .conn-dot { width: 8px; height: 8px; border-radius: 50%; background: #c9a99a; flex-shrink: 0; }
+.conn-status.state-demo .conn-dot { background: #b9c6d9; }
+.conn-status.state-connecting .conn-dot,
+.conn-status.state-reconnecting .conn-dot { background: #e6c23f; animation: pulse 1s ease-in-out infinite; }
+.conn-status.state-connected .conn-dot { background: #8fcaa8; }
+.conn-status.state-disconnected .conn-dot,
+.conn-status.state-error .conn-dot { background: #e0857b; }
+
+/* ── Live-vitals readout — shared inner styling; each screen positions its own container ── */
+.vitals-line { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.vitals-line .vitals-ico { color: #d98b82; }
+.vitals-line .vitals-sep { color: #d3c3b4; }
+.vitals-line .vitals-sqi { font-weight: 600; }
+.vitals-line .sqi-good { color: #6fae8b; }
+.vitals-line .sqi-fair { color: #c99a3f; }
+.vitals-line .sqi-poor { color: #d07a6f; }
+.vitals-warming { color: #b8a99b; font-style: italic; }
+
+/* baseline-focus vitals — subtle readout under the capture; sits beneath the
+   #intro (z10) and #complete (z5) overlays, so it only shows during capture. */
+#screen-baseline-focus #bf-vitals {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 26px;
+  z-index: 4;
+  text-align: center;
+  font-size: .74rem;
+  letter-spacing: 0.04em;
+  color: #8a7c70;
+}
+
+/* baseline-questions vitals — small readout at the top of the card */
+#screen-baseline-questions #bq-vitals {
+  font-size: .72rem;
+  letter-spacing: 0.05em;
+  color: #8a7c70;
+  min-height: 1em;
+  margin-bottom: 22px;
+}
+
+/* live-test — expanded result panel (reactivity/confidence + per-channel z) */
+#screen-live-test .result-metrics {
+  display: flex;
+  gap: 34px;
+  justify-content: center;
+  margin: -6px 0 22px;
+}
+#screen-live-test .metric { text-align: center; }
+#screen-live-test .metric-val { font-size: 1.5rem; font-weight: 600; color: #6b5b52; }
+#screen-live-test .metric-lbl {
+  font-size: .68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #a89a8c;
+  margin-top: 2px;
+}
+#screen-live-test .ch-table {
+  width: 100%;
+  max-width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+#screen-live-test .ch-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: .82rem;
+  border-bottom: 1px solid #f2e9dd;
+  padding-bottom: 6px;
+}
+#screen-live-test .ch-row:last-child { border-bottom: none; padding-bottom: 0; }
+#screen-live-test .ch-name { color: #8a7c70; }
+#screen-live-test .ch-z { font-weight: 600; font-variant-numeric: tabular-nums; }
+#screen-live-test .ch-z.z-hot { color: #c15b4e; }
+#screen-live-test .ch-z.z-cool { color: #4f8f9c; }
+#screen-live-test .ch-z.z-neutral { color: #9a8b7d; }
+#screen-live-test .result-note {
+  font-size: .82rem;
+  color: #8a7c70;
+  line-height: 1.5;
+  margin: -8px 0 22px;
+  max-width: 300px;
+}
 </style>
 </head>
 <body>
+
+<!-- Connection status — shown only on the capture screens (baseline + live),
+     toggled by showScreen(); text/dot driven by the Polygraph status bridge. -->
+<div class="conn-status state-demo" id="conn-status" role="status" aria-live="polite" style="display:none">
+  <span class="conn-dot" id="conn-dot"></span>
+  <span class="conn-text" id="conn-text">Demo mode</span>
+</div>
 
 <!-- ════════════════════════════════════════════════════════════════════
      SCREEN: landing
@@ -1066,6 +1186,9 @@ body.breathing-bg #screen-baseline-focus #hue {
     <div class="complete-sub">Please pass the device back to the examiner.</div>
     <button class="continue-btn" id="bf-proceed-btn" style="margin-top:14px">Continue</button>
   </div>
+
+  <!-- Live vitals during the resting capture (hidden beneath the intro/complete overlays). -->
+  <div id="bf-vitals"></div>
 </section>
 
 <!-- ════════════════════════════════════════════════════════════════════
@@ -1078,6 +1201,7 @@ body.breathing-bg #screen-baseline-focus #hue {
     <div class="eyebrow" id="bq-eyebrow">Baseline Questions</div>
 
     <div class="card">
+      <div id="bq-vitals"></div>
       <div class="bq-dots" id="bq-dots"></div>
       <div class="question" id="bq-question-text"></div>
       <div class="capture-wrap" id="bq-capture-wrap"></div>
@@ -1159,8 +1283,83 @@ const screenEnterHandlers = {};
 function showScreen(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
+  updateConnVisibility(id);
   window.scrollTo(0, 0);
   if (screenEnterHandlers[id]) screenEnterHandlers[id]();
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   SHARED — connection-status pill. The backend bridge (window.Polygraph)
+   stores the latest source state and fires a 'polygraph-status' event; the
+   pill is only surfaced on the capture screens (baseline + live-test).
+   ══════════════════════════════════════════════════════════════════════ */
+const CONN_LABELS = {
+  demo: 'Demo mode',
+  connecting: 'Connecting…',
+  connected: 'Live',
+  reconnecting: 'Reconnecting…',
+  disconnected: 'Disconnected',
+  error: 'Connection error'
+};
+const STATUS_SCREENS = new Set(['screen-baseline-focus', 'screen-baseline-questions', 'screen-live-test']);
+
+function renderConnStatus(state) {
+  const el = document.getElementById('conn-status');
+  if (!el) return;
+  const st = state || (window.Polygraph && window.Polygraph.status) || 'demo';
+  el.className = 'conn-status state-' + st;   // inline style.display is untouched by this
+  const txt = document.getElementById('conn-text');
+  if (txt) txt.textContent = CONN_LABELS[st] || st;
+}
+
+function updateConnVisibility(id) {
+  const el = document.getElementById('conn-status');
+  if (!el) return;
+  if (STATUS_SCREENS.has(id)) {
+    el.style.display = 'flex';
+    renderConnStatus();
+  } else {
+    el.style.display = 'none';
+  }
+}
+
+window.addEventListener('polygraph-status', e => renderConnStatus(e.detail && e.detail.state));
+
+/* ══════════════════════════════════════════════════════════════════════
+   SHARED — live-vitals poller (~4 Hz). Reads Polygraph.vitals() → {hr,scl,sqi}
+   or null; renders HR / GSR(SCL) / signal-quality, or a "warming up…"
+   placeholder before the engine has enough data. Self-terminates when its
+   owning screen is no longer active, so no timer leaks across navigation.
+   ══════════════════════════════════════════════════════════════════════ */
+const VITALS_HZ_MS = 250;   // ~4 Hz
+
+function startVitalsPoll(elId, screenId) {
+  const el = document.getElementById(elId);
+  if (!el) return null;
+  let timer = null;
+  const stop = () => { if (timer) clearInterval(timer); timer = null; };
+  const paint = () => {
+    if (screenId) {
+      const scr = document.getElementById(screenId);
+      if (!scr || !scr.classList.contains('active')) { stop(); return; }
+    }
+    const v = window.Polygraph ? window.Polygraph.vitals() : null;
+    if (!v) { el.innerHTML = '<span class="vitals-warming">warming up…</span>'; return; }
+    const hr = Number.isFinite(v.hr) ? Math.round(v.hr) + ' bpm' : '– bpm';
+    const scl = Number.isFinite(v.scl) ? Math.round(v.scl) : '–';
+    const q = !Number.isFinite(v.sqi) ? '–' : v.sqi > 0.6 ? 'good' : v.sqi > 0.4 ? 'fair' : 'poor';
+    el.innerHTML =
+      '<span class="vitals-line">' +
+        '<span class="vitals-item"><span class="vitals-ico">♥</span> ' + hr + '</span>' +
+        '<span class="vitals-sep">·</span>' +
+        '<span class="vitals-item">EDA ' + scl + '</span>' +
+        '<span class="vitals-sep">·</span>' +
+        '<span class="vitals-item">signal <span class="vitals-sqi sqi-' + q + '">' + q + '</span></span>' +
+      '</span>';
+  };
+  paint();
+  timer = setInterval(paint, VITALS_HZ_MS);
+  return timer;
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -1506,11 +1705,16 @@ document.getElementById('ld-start-btn').addEventListener('click', () => showScre
     );
   }
 
+  let bfVitalsTimer = null;
+  function stopBfVitals() { if (bfVitalsTimer) clearInterval(bfVitalsTimer); bfVitalsTimer = null; }
+
   function beginFocus() {
     document.getElementById('intro').style.display = 'none';
     document.body.classList.add('breathing-bg');
     document.getElementById('focus-dot').classList.add('breathing');
     if (window.Polygraph) window.Polygraph.beginBaseline();   // start feeding the engine
+    stopBfVitals();
+    bfVitalsTimer = startVitalsPoll('bf-vitals', 'screen-baseline-focus');
     startFocusDot();
     startGrains();
 
@@ -1531,6 +1735,7 @@ document.getElementById('ld-start-btn').addEventListener('click', () => showScre
 
   function showComplete() {
     stopGrains();
+    stopBfVitals();
     document.getElementById('dot-wrap').style.display = 'none';
     document.querySelectorAll('#screen-baseline-focus .wall-paddle').forEach(p => p.style.display = 'none');
     document.getElementById('hourglass-wrap').style.display = 'none';
@@ -1549,6 +1754,7 @@ document.getElementById('ld-start-btn').addEventListener('click', () => showScre
     if (progressAnim) cancelAnimationFrame(progressAnim);
     stopFocusDot();
     stopGrains();
+    stopBfVitals();
     document.body.classList.remove('breathing-bg');
     proceedFromBaseline();
   }
@@ -1830,6 +2036,9 @@ document.getElementById('ld-start-btn').addEventListener('click', () => showScre
     if (progressAnim) cancelAnimationFrame(progressAnim);
     stopFocusDot();
     stopGrains();
+    stopBfVitals();
+    const bfv = document.getElementById('bf-vitals');
+    if (bfv) bfv.innerHTML = '';
     document.body.classList.remove('breathing-bg');
 
     const intro = document.getElementById('intro');
@@ -1876,6 +2085,7 @@ document.getElementById('ld-start-btn').addEventListener('click', () => showScre
 
   let idx = 0;
   let capturing = false;
+  let bqVitalsTimer = null;
 
   function renderDots() {
     const wrap = document.getElementById('bq-dots');
@@ -1964,6 +2174,10 @@ document.getElementById('ld-start-btn').addEventListener('click', () => showScre
     const p = loadProfiles().find(x => x.id === id);
     document.getElementById('bq-eyebrow').textContent = 'Baseline Questions' + (p ? ' · ' + p.name : '');
     renderQuestion();
+    // Live vitals while the calibration questions are answered (self-stops on leave).
+    if (bqVitalsTimer) clearInterval(bqVitalsTimer);
+    if (window.Polygraph) window.Polygraph.ensureStarted();
+    bqVitalsTimer = startVitalsPoll('bq-vitals', 'screen-baseline-questions');
   };
 })();
 
@@ -1987,12 +2201,13 @@ document.getElementById('ld-start-btn').addEventListener('click', () => showScre
 (function () {
   const CAPTURE_MIN_MS = 6000;
   // Minimum time the "Analyzing" loader is shown before a determination appears —
-  // one full typewriter cycle. Deliberately held even if the (placeholder) result
-  // is instant, so the outcome doesn't feel glib.
+  // one full typewriter cycle. Deliberately held even though the engine's
+  // determination is computed instantly, so the outcome doesn't feel glib.
   const ANALYZING_MIN_MS = 5000;
 
-  // Placeholder only — no real signal wired in yet, so the outcome is picked at
-  // random just to exercise the three result states.
+  // Visual style (badge + glow) per verdict label. The label itself comes from
+  // the engine's real determination (Polygraph.lastResult); this table only maps
+  // that label → its badge/glow classes.
   const OUTCOMES = [
     { label: 'Truthful', badge: 'result-truthful', glow: 'glow-truthful' },
     { label: 'Deceptive', badge: 'result-deceptive', glow: 'glow-deceptive' },
@@ -2005,18 +2220,11 @@ document.getElementById('ld-start-btn').addEventListener('click', () => showScre
   let gridTimer = null;
   let analyzingActive = false;
 
+  // Live vitals stay up the whole time this screen is active (shared ~4 Hz
+  // poller reading Polygraph.vitals(); shows "warming up…" until the engine
+  // has a full window of data).
   let vitalsTimer = null;
-  function startVitals() {
-    stopVitals();
-    const el = document.getElementById('lt-vitals');
-    vitalsTimer = setInterval(() => {
-      const v = window.Polygraph && window.Polygraph.vitals();
-      if (!v) { el.textContent = ''; return; }
-      const hr = Number.isFinite(v.hr) ? Math.round(v.hr) + ' bpm' : '– bpm';
-      const q = v.sqi > 0.6 ? 'good' : v.sqi > 0.4 ? 'fair' : 'poor';
-      el.textContent = `♥ ${hr}   ·   EDA ${Math.round(v.scl)}   ·   signal ${q}`;
-    }, 400);
-  }
+  function startVitals() { stopVitals(); vitalsTimer = startVitalsPoll('lt-vitals', 'screen-live-test'); }
   function stopVitals() { if (vitalsTimer) clearInterval(vitalsTimer); vitalsTimer = null; }
 
   function beginCapture() {
@@ -2062,8 +2270,8 @@ document.getElementById('ld-start-btn').addEventListener('click', () => showScre
     }, 200);
 
     // Compute the real determination now (at "Response Settled"); the loader
-    // just holds the minimum labour-illusion time before revealing it.
-    stopVitals();
+    // just holds the minimum labour-illusion time before revealing it. Vitals
+    // keep streaming in the header throughout.
     if (window.Polygraph) window.Polygraph.finishResponse();
 
     analyzingActive = true;
@@ -2109,18 +2317,54 @@ document.getElementById('ld-start-btn').addEventListener('click', () => showScre
     holder.innerHTML = '';
   }
 
+  const CH_LABELS = { scrAmp: 'SCR amp', scl: 'GSR level', hr: 'Heart rate', pulseAmp: 'Pulse amp' };
+
   function renderResult() {
     // Use the engine's real determination; fall back only if it's unavailable.
     const res = (window.Polygraph && window.Polygraph.lastResult) || null;
-    const label = res ? res.label : 'Inconclusive';
-    const outcome = OUTCOMES.find(o => o.label === label) || OUTCOMES[2];
-    const conf = res ? Math.round(res.confidence * 100) : null;
     const card = document.getElementById('lt-card');
     card.style.display = 'flex';
+
+    // No resting baseline captured this session → the engine can't establish a
+    // verdict (scoreResponse forces Inconclusive with baselineReady:false). Say
+    // so plainly rather than presenting a hollow "Inconclusive" as a reading.
+    if (res && res.baselineReady === false) {
+      card.className = 'card';
+      card.innerHTML = `
+        <div class="result-badge result-inconclusive">Baseline needed</div>
+        <div class="result-note">No resting baseline has been captured this session, so a reliable verdict can't be established. Run the baseline capture before testing.</div>
+        <button class="again-btn" id="lt-again-btn">Run Again</button>
+      `;
+      document.getElementById('lt-again-btn').addEventListener('click', reset);
+      return;
+    }
+
+    const label = res ? res.label : 'Inconclusive';
+    const outcome = OUTCOMES.find(o => o.label === label) || OUTCOMES[2];
+    const react = res && Number.isFinite(res.reactivity) ? Math.round(res.reactivity * 100) : null;
+    const conf = res && Number.isFinite(res.confidence) ? Math.round(res.confidence * 100) : null;
+
+    // Per-channel z-scores — only channels the engine actually scored (finite z).
+    const ch = (res && res.channels) || {};
+    const rows = ['scrAmp', 'scl', 'hr', 'pulseAmp']
+      .filter(k => ch[k] && Number.isFinite(ch[k].z))
+      .map(k => {
+        const z = ch[k].z;
+        const cls = z >= 1 ? 'z-hot' : z <= -1 ? 'z-cool' : 'z-neutral';
+        const sign = z > 0 ? '+' : '';
+        return `<div class="ch-row"><span class="ch-name">${CH_LABELS[k]}</span>` +
+               `<span class="ch-z ${cls}">${sign}${z.toFixed(2)}σ</span></div>`;
+      }).join('');
+
     card.className = 'card ' + outcome.glow;
     card.innerHTML = `
       <div class="result-badge ${outcome.badge}">${outcome.label}</div>
-      ${conf != null ? `<div class="subject" style="margin:-14px 0 22px">confidence ${conf}%</div>` : ''}
+      ${(react != null || conf != null) ? `
+      <div class="result-metrics">
+        ${react != null ? `<div class="metric"><div class="metric-val">${react}%</div><div class="metric-lbl">reactivity</div></div>` : ''}
+        ${conf != null ? `<div class="metric"><div class="metric-val">${conf}%</div><div class="metric-lbl">confidence</div></div>` : ''}
+      </div>` : ''}
+      ${rows ? `<div class="ch-table">${rows}</div>` : ''}
       <button class="again-btn" id="lt-again-btn">Run Again</button>
     `;
     document.getElementById('lt-again-btn').addEventListener('click', reset);
@@ -2142,7 +2386,7 @@ document.getElementById('ld-start-btn').addEventListener('click', () => showScre
       <button class="action-btn" id="lt-action-btn">Begin Capture</button>
     `;
     document.getElementById('lt-action-btn').addEventListener('click', beginCapture);
-    const v = document.getElementById('lt-vitals'); if (v) v.textContent = '';
+    startVitals();   // keep the header vitals live while awaiting the next capture
   }
 
   function endSession() {
@@ -2152,7 +2396,6 @@ document.getElementById('ld-start-btn').addEventListener('click', () => showScre
 
   // ── Demo-only: force a determination immediately, from any state ──
   function skipToResult() {
-    stopVitals();
     analyzingActive = false;
     clearInterval(gridTimer);
     const holder = document.getElementById('lt-analyzing-holder');
@@ -2204,11 +2447,27 @@ let started = false, baselineStartT = null, respStart = null;
 const Polygraph = {
   engine, isDemo, lastResult: null,
 
+  // Latest connection state from the data source. Demo is 'demo' from the
+  // outset; a live socket starts 'connecting' until it opens. Surfaced to the
+  // UI via the assignable onStatus hook AND a 'polygraph-status' window event.
+  status: isDemo ? 'demo' : 'connecting',
+  onStatus: null,
+
+  _setStatus(state) {
+    this.status = state;
+    try { if (typeof this.onStatus === 'function') this.onStatus(state); } catch (e) {}
+    try { window.dispatchEvent(new CustomEvent('polygraph-status', { detail: { state } })); } catch (e) {}
+  },
+
   // Lazily begin streaming samples into the engine. Idempotent.
   ensureStarted() {
     if (started) return;
     started = true;
-    source.connect((t, gsr, ir) => engine.ingest(t, gsr, ir), () => {});
+    if (!isDemo) this._setStatus('connecting');
+    source.connect(
+      (t, gsr, ir) => engine.ingest(t, gsr, ir),
+      state => this._setStatus(state)
+    );
     if (isDemo) source.startRealtime();
   },
 
@@ -2249,7 +2508,7 @@ const Polygraph = {
   // Deceptive. No-op on real hardware.
   react() { if (isDemo && source.reactNow) source.reactNow(); },
 
-  end() { source.disconnect(); started = false; baselineStartT = null; respStart = null; engine.reset(); },
+  end() { source.disconnect(); started = false; baselineStartT = null; respStart = null; engine.reset(); this._setStatus('disconnected'); },
 };
 
 window.Polygraph = Polygraph;

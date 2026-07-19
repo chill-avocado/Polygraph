@@ -2,7 +2,7 @@
 // Embeds the browser app + ES modules for the ESP32 to serve.
 #pragma once
 
-// polygraph_app.html  (90314 bytes)  -> /
+// polygraph_app.html  (90705 bytes)  -> /
 static const char APP_HTML[] PROGMEM = R"POLY_ASSET_9c1f(
 <!DOCTYPE html>
 <html lang="en">
@@ -2531,6 +2531,14 @@ const Polygraph = {
 };
 
 window.Polygraph = Polygraph;
+
+// The "Skip (demo)" shortcuts fast-forward the synthetic subject; on real
+// hardware they'd let an examiner bypass the resting baseline (yielding a
+// "Baseline needed" non-result) and show a control labelled "(demo)" during a
+// live exam. Hide them whenever we're not in demo mode.
+if (!isDemo) {
+  document.querySelectorAll('.skip-demo').forEach(b => { b.style.display = 'none'; });
+}
 </script>
 
 </body>
@@ -3063,7 +3071,7 @@ export { extractFeatures, BaselineModel, scoreResponseFeatures, FEATURES, CHANNE
 
 )POLY_ASSET_9c1f";
 
-// polygraph_source.js  (9560 bytes)  -> /polygraph_source.js
+// polygraph_source.js  (10287 bytes)  -> /polygraph_source.js
 static const char SOURCE_JS[] PROGMEM = R"POLY_ASSET_9c1f(
 /* ══════════════════════════════════════════════════════════════════════════
    polygraph_source.js — unified sample source for the app
@@ -3124,7 +3132,11 @@ export class LiveSource {
     this.attempts = 0;             // consecutive failed connects (reset on open)
     this.reconnectTimer = null;
     this.intentional = false;      // set by disconnect() → suppresses reconnect
-    this.lastT = -Infinity;        // last DELIVERED device t; persists across reconnects
+    this.lastT = -Infinity;        // last DELIVERED device t (reset each new connection)
+    // A backward jump larger than this means the device CLOCK restarted (reboot
+    // or millis() wrap), not a duplicate frame — so we accept it and re-baseline
+    // instead of silently dropping the stream forever.
+    this.rewindToleranceMs = 1000;
   }
 
   connect(onSample, onStatus) {
@@ -3154,6 +3166,10 @@ export class LiveSource {
     ws.onopen = () => {
       this.backoff = this.baseBackoff;   // reset backoff on a good connection
       this.attempts = 0;
+      // Fresh connection = possibly a fresh device clock (it may have rebooted
+      // while we were disconnected). Re-baseline so post-reboot t values, which
+      // restart near 0, are not all rejected as "rewound".
+      this.lastT = -Infinity;
       this.onStatus('connected');
     };
     ws.onerror = () => { this.onStatus('error'); };
@@ -3189,14 +3205,16 @@ export class LiveSource {
   }
 
   // Parse + deliver samples in order. Timestamp hygiene: pass device t through
-  // as-is, but DROP any sample whose t is not strictly greater than the last
-  // delivered t (kills duplicate/rewound frames re-sent after a reconnect).
+  // as-is; drop a small duplicate/rewind (t <= lastT within the tolerance), but
+  // ACCEPT a large backward jump — that means the device clock restarted (reboot
+  // or millis() wrap), and dropping it would kill the stream permanently.
   _ingestText(text) {
     let rows;
     try { rows = parseFrame(text); } catch (e) { return; }
     for (let i = 0; i < rows.length; i++) {
       const t = rows[i][0], gsr = rows[i][1], ir = rows[i][2];
-      if (!(t > this.lastT)) continue;   // also rejects NaN/dupes/rewinds
+      if (!Number.isFinite(t)) continue;                          // parseFrame guards, belt-and-suspenders
+      if (t <= this.lastT && (this.lastT - t) < this.rewindToleranceMs) continue;  // dup/tiny rewind
       this.lastT = t;
       try { this.onSample(t, gsr, ir); }
       catch (e) { /* a bad consumer must not stall the rest of the batch */ }

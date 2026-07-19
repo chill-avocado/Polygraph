@@ -2525,6 +2525,14 @@ const Polygraph = {
 };
 
 window.Polygraph = Polygraph;
+
+// The "Skip (demo)" shortcuts fast-forward the synthetic subject; on real
+// hardware they'd let an examiner bypass the resting baseline (yielding a
+// "Baseline needed" non-result) and show a control labelled "(demo)" during a
+// live exam. Hide them whenever we're not in demo mode.
+if (!isDemo) {
+  document.querySelectorAll('.skip-demo').forEach(b => { b.style.display = 'none'; });
+}
 </script>
 
 </body>

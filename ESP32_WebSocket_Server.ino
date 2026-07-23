@@ -1,11 +1,19 @@
 /*
- * ESP32 BioMonitor — Self-Hosted WiFi Dashboard
- * ──────────────────────────────────────────────
- * Creates its own WiFi AP ("BioMonitor" / "sensor123").
- * Serves the full processing dashboard at http://192.168.4.1/
- * Streams RAW sensor CSV via WebSocket at ws://192.168.4.1/ws
- * All signal processing (HR, HRV, SpO2, GSR, SQI, Polygraph)
- * runs in the browser — no host computer required.
+ * ESP32 BioMonitor — sensor front-end (two roles, both always active)
+ * ───────────────────────────────────────────────────────────────────
+ * ROLE 1 (primary) — ADC for the Raspberry Pi.
+ *   Samples at 100 Hz and prints `t,gsr,ir,red` to USB SERIAL at 921600 baud.
+ *   The Pi does all the heavy analysis (NeuroKit2 cvxEDA / SparsEDA / PPG
+ *   quality, FLIRT features). No WiFi is involved in this path at all.
+ *
+ * ROLE 2 (fallback) — standalone, no host computer.
+ *   Also creates its own WiFi AP ("BioMonitor" / "sensor123"), serves the full
+ *   browser app at http://192.168.4.1/ and streams the same CSV over WebSocket
+ *   at ws://192.168.4.1/ws, with all processing done in the browser.
+ *   This keeps working if the Pi is absent or switched off.
+ *
+ * Sampling happens unconditionally; the WebSocket batch is only built when a
+ * browser is actually attached, so the fallback costs nothing when unused.
  *
  * ── Wire format (PINNED CONTRACT — the frontend parses exactly this) ──
  *   Each WebSocket TEXT frame carries one OR MORE newline-separated lines.
@@ -28,6 +36,18 @@
  *   client TX queue is saturated (ws.availableForWriteAll()==false); in the
  *   saturated case the pending batch is dropped. The stream task never blocks.
  *
+ * ── Device health & keepalive (does NOT touch the stream/wire format) ──
+ *   GET /status returns application/json with device health, e.g.
+ *     {"fw":"biomonitor-1","sensorOK":true,"uptimeMs":123456,"clients":1,
+ *      "freeHeap":210000,"minFreeHeap":190000,"sampleHz":100,"gsrPin":34,
+ *      "ssid":"BioMonitor"}
+ *   It is built with snprintf into a small static buffer (no heap churn) and
+ *   registered before onNotFound so the "/" redirect doesn't swallow it.
+ *   Separately, loop() calls ws.pingAll() about every 5 s (alongside the
+ *   existing ws.cleanupClients()) so dead/half-open WebSocket clients are
+ *   detected and pruned, improving the browser's reconnect behavior. Neither
+ *   adds any blocking delay to the 100 Hz stream task.
+ *
  * Hardware:
  *   MAX30105 PPG sensor  →  I2C  SDA=21  SCL=22
  *   GSR electrode pair   →  GPIO 34  (ADC1_CH6)
@@ -45,6 +65,7 @@
 #include "web_assets.h"     // PROGMEM: the validated app + ES modules (see build_web_assets.py)
 
 // ─── Configuration ─────────────────────────────────────────────────────────────
+static const char*   FW_VERSION = "biomonitor-1";   // reported by GET /status
 static const char*   AP_SSID    = "BioMonitor";
 static const char*   AP_PASS    = "sensor123";
 static const uint8_t AP_CHANNEL = 6;
@@ -91,10 +112,8 @@ static void streamTask(void*) {
     for (;;) {
         vTaskDelayUntil(&last, period);
 
-        // No clients: hold cadence, keep the batch empty.
-        if (ws.count() == 0) { used = 0; inBatch = 0; continue; }
-
-        // ── sample RAW values ──
+        // ── sample RAW values (ALWAYS — the Pi is fed over USB serial even
+        //    when no browser is attached to the WiFi fallback) ──
         unsigned long ir = 0, red = 0;
         if (sensorOK) {
             sensor.check();
@@ -109,8 +128,18 @@ static void streamTask(void*) {
         if (n <= 0) continue;
         if (n >= (int)sizeof(line)) n = (int)sizeof(line) - 1;   // truncation guard
 
-        // ── overflow guard: flush before appending if it wouldn't fit ──
-        if (used + (size_t)n >= sizeof(batch)) {
+        // ── PRIMARY PATH: USB serial → Raspberry Pi (ADC role) ──
+        // ~30 B/sample at 100 Hz = ~3 kB/s, far below the 921600 baud link, so
+        // this never blocks the cadence. The boot/status lines printed below
+        // contain no commas, so the Pi's parser (which requires >=3 numeric
+        // CSV fields) skips them harmlessly.
+        Serial.write((const uint8_t*)line, (size_t)n);
+
+        // ── FALLBACK PATH: batch to WebSocket only when a browser is attached
+        //    to the ESP32's own AP (standalone mode, unchanged behaviour) ──
+        if (ws.count() == 0) { used = 0; inBatch = 0; continue; }
+
+        if (used + (size_t)n >= sizeof(batch)) {   // overflow guard
             flushBatch(batch, used);
             used = 0; inBatch = 0;
         }
@@ -119,8 +148,7 @@ static void streamTask(void*) {
         used   += (size_t)n;
         inBatch++;
 
-        // ── time-based flush (~50 ms cadence) ──
-        if (inBatch >= FLUSH_SAMPLES) {
+        if (inBatch >= FLUSH_SAMPLES) {            // ~50 ms cadence
             flushBatch(batch, used);
             used = 0; inBatch = 0;
         }
@@ -129,7 +157,8 @@ static void streamTask(void*) {
 
 // ─── setup ─────────────────────────────────────────────────────────────────────
 void setup() {
-    Serial.begin(115200);
+    // 921600: the USB link to the Raspberry Pi carries the 100 Hz sample stream.
+    Serial.begin(921600);
     delay(200);
     Serial.println("\n[Boot] ESP32 BioMonitor");
 
@@ -171,6 +200,29 @@ void setup() {
     // MIME so the browser's `import` works). Generated by build_web_assets.py.
     REGISTER_WEB_ASSETS(httpServer);
 
+    // Device-health JSON. Built with snprintf into a small static buffer (no
+    // heap churn). Registered BEFORE onNotFound so the "/" redirect below does
+    // not swallow it. Read-only — does not touch the stream task or wire format.
+    httpServer.on("/status", HTTP_GET, [](AsyncWebServerRequest* req) {
+        static char json[256];
+        int n = snprintf(json, sizeof(json),
+            "{\"fw\":\"%s\",\"sensorOK\":%s,\"uptimeMs\":%lu,\"clients\":%u,"
+            "\"freeHeap\":%u,\"minFreeHeap\":%u,\"sampleHz\":%u,\"gsrPin\":%u,"
+            "\"ssid\":\"%s\"}",
+            FW_VERSION,
+            sensorOK ? "true" : "false",
+            (unsigned long)millis(),
+            (unsigned)ws.count(),
+            (unsigned)ESP.getFreeHeap(),
+            (unsigned)ESP.getMinFreeHeap(),
+            (unsigned)(1000 / PERIOD_MS),
+            (unsigned)GSR_PIN,
+            AP_SSID);
+        if (n < 0) n = 0;
+        if (n >= (int)sizeof(json)) n = (int)sizeof(json) - 1;   // truncation guard
+        req->send(200, "application/json", json);
+    });
+
     // Redirect anything else to root
     httpServer.onNotFound([](AsyncWebServerRequest* req) {
         req->redirect("/");
@@ -187,5 +239,16 @@ void setup() {
 // ─── loop ──────────────────────────────────────────────────────────────────────
 void loop() {
     ws.cleanupClients();
+
+    // Keepalive: ping all clients ~every 5 s (this loop ticks ~every 1 s) so
+    // dead/half-open connections are detected and pruned by AsyncWebSocket,
+    // improving the browser's reconnect behavior. Non-blocking; independent of
+    // the Core 1 stream task.
+    static uint8_t pingTick = 0;
+    if (++pingTick >= 5) {
+        pingTick = 0;
+        ws.pingAll();
+    }
+
     vTaskDelay(pdMS_TO_TICKS(1000));
 }

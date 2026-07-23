@@ -1088,6 +1088,34 @@ body.breathing-bg #screen-baseline-focus #hue {
   margin: -8px 0 22px;
   max-width: 300px;
 }
+
+/* ── Live waveforms + multi-question exam + history (backend feature wave) ── */
+#lt-waveforms { width: 100%; height: 200px; display: block; margin: 4px 0 16px; }
+
+.exam-progress { font-size: .7rem; letter-spacing: .07em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 10px; }
+.exam-question { font-size: 1.15rem; line-height: 1.4; color: var(--text-strong); font-weight: 600; margin: 0 0 20px; max-width: 320px; }
+.q-type { font-weight: 700; }
+.q-relevant { color: var(--z-hot); }
+.q-comparison { color: var(--amber); }
+.q-neutral { color: var(--text-soft); }
+
+.pq-table { width: 100%; max-width: 320px; display: flex; flex-direction: column; gap: 7px; margin: 2px 0 20px; }
+.pq-row { display: flex; align-items: center; gap: 10px; font-size: .8rem; border-bottom: 1px solid var(--border-soft); padding-bottom: 6px; }
+.pq-row:last-child { border-bottom: none; padding-bottom: 0; }
+.pq-row.q-unused { opacity: .42; }
+.pq-type { width: 18px; height: 18px; flex-shrink: 0; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: .6rem; font-weight: 700; color: var(--surface); background: var(--text-soft); }
+.pqt-relevant { background: var(--z-hot); }
+.pqt-comparison { background: var(--amber); }
+.pqt-neutral { background: var(--line); }
+.pq-text { flex: 1; text-align: left; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pq-react { font-variant-numeric: tabular-nums; color: var(--text-muted); }
+
+.lt-result-actions { display: flex; gap: 10px; justify-content: center; }
+.again-btn.ghost { background: transparent; border: 1px solid var(--border); color: var(--text-soft); }
+
+#screen-history .page { width: 100%; max-width: 480px; }
+#screen-history .subject { margin-bottom: 16px; }
+#history-list { display: flex; flex-direction: column; gap: 10px; margin: 8px 0 22px; text-align: left; }
 </style>
 </head>
 <body>
@@ -1275,6 +1303,7 @@ body.breathing-bg #screen-baseline-focus #hue {
 
     <div class="actions">
       <button class="btn-primary" id="bs-begin-test">Begin Test</button>
+      <button class="btn-secondary" id="bs-history">View History</button>
       <button class="btn-secondary" id="bs-back-profiles">Back to Profiles</button>
     </div>
   </div>
@@ -1292,6 +1321,9 @@ body.breathing-bg #screen-baseline-focus #hue {
     <div class="subject" id="lt-subject"></div>
     <div class="subject" id="lt-vitals" style="font-size:.72rem;letter-spacing:.05em;margin-top:-22px;min-height:1em"></div>
 
+    <!-- Live physiological waveforms (EDA / pulse / HR) — rendered by polygraph_charts.js. -->
+    <canvas id="lt-waveforms"></canvas>
+
     <div class="card" id="lt-card">
       <div class="capture-wrap" id="lt-capture-wrap"></div>
       <button class="action-btn" id="lt-action-btn">Begin Capture</button>
@@ -1300,6 +1332,18 @@ body.breathing-bg #screen-baseline-focus #hue {
     <div class="analyzing-holder" id="lt-analyzing-holder" style="display:none"></div>
 
     <button class="end-link" id="lt-end-link" style="margin-top:22px">End session</button>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     SCREEN: history — past exam sessions for the current subject
+     ════════════════════════════════════════════════════════════════════ -->
+<section class="screen" id="screen-history">
+  <div class="page">
+    <div class="eyebrow">Session History</div>
+    <div class="subject" id="hist-subject"></div>
+    <div id="history-list"></div>
+    <button class="end-link" id="hist-back">Back</button>
   </div>
 </section>
 
@@ -2234,6 +2278,7 @@ document.getElementById('ld-start-btn').addEventListener('click', () => showScre
    ══════════════════════════════════════════════════════════════════════ */
 (function () {
   document.getElementById('bs-begin-test').addEventListener('click', () => showScreen('screen-live-test'));
+  document.getElementById('bs-history').addEventListener('click', () => showScreen('screen-history'));
   document.getElementById('bs-back-profiles').addEventListener('click', () => showScreen('screen-profiles'));
 
   screenEnterHandlers['screen-baseline-saved'] = function () {
@@ -2261,6 +2306,8 @@ document.getElementById('ld-start-btn').addEventListener('click', () => showScre
     { label: 'Deceptive', badge: 'result-deceptive', glow: 'glow-deceptive' },
     { label: 'Inconclusive', badge: 'result-inconclusive', glow: 'glow-inconclusive' }
   ];
+  const TYPE_LABEL = { relevant: 'Relevant', comparison: 'Comparison', neutral: 'Neutral' };
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   const GRID_PATH = [4, 1, 0, 3, 6, 7, 8, 5, 2, 1, 4, 7, 6, 3, 0, 1, 2, 5, 8, 7, 4];
   const WORD = 'Analyzing';
@@ -2275,6 +2322,30 @@ document.getElementById('ld-start-btn').addEventListener('click', () => showScre
   function startVitals() { stopVitals(); vitalsTimer = startVitalsPoll('lt-vitals', 'screen-live-test'); }
   function stopVitals() { if (vitalsTimer) clearInterval(vitalsTimer); vitalsTimer = null; }
 
+  // Render the current exam question (from the CQT protocol) with a fresh
+  // Begin Capture button. Called on entry and between questions.
+  function showQuestion() {
+    const P = window.Polygraph;
+    const q = P ? P.currentQuestion() : null;
+    const prog = P ? P.examProgress() : { index: 0, total: 0 };
+    const card = document.getElementById('lt-card');
+    card.style.display = 'flex';
+    card.className = 'card';
+    if (!q) {
+      card.innerHTML = '<div class="result-note">No questions are configured for this exam.</div>' +
+        '<button class="again-btn" id="lt-again-btn">Run Again</button>';
+      document.getElementById('lt-again-btn').addEventListener('click', reset);
+      return;
+    }
+    card.innerHTML =
+      `<div class="exam-progress">Question ${prog.index + 1} of ${prog.total} · ` +
+        `<span class="q-type q-${q.type}">${TYPE_LABEL[q.type] || 'Question'}</span></div>` +
+      `<div class="exam-question">${esc(q.text)}</div>` +
+      '<div class="capture-wrap" id="lt-capture-wrap"></div>' +
+      '<button class="action-btn" id="lt-action-btn">Begin Capture</button>';
+    document.getElementById('lt-action-btn').addEventListener('click', beginCapture);
+  }
+
   function beginCapture() {
     const captureWrap = document.getElementById('lt-capture-wrap');
     const btn = document.getElementById('lt-action-btn');
@@ -2288,8 +2359,16 @@ document.getElementById('ld-start-btn').addEventListener('click', () => showScre
     setTimeout(() => {
       btn.disabled = false;
       btn.textContent = 'Response Settled';
-      btn.onclick = startAnalyzing;
+      btn.onclick = settleResponse;
     }, CAPTURE_MIN_MS);
+  }
+
+  // Score the just-captured window, fold it into the protocol, then show the
+  // next question — or, when the exam is complete, analyze → aggregate verdict.
+  function settleResponse() {
+    const st = window.Polygraph ? window.Polygraph.recordAndAdvance() : { complete: true };
+    if (st && !st.complete) showQuestion();
+    else startAnalyzing();
   }
 
   function startAnalyzing() {
@@ -2317,15 +2396,13 @@ document.getElementById('ld-start-btn').addEventListener('click', () => showScre
       step++;
     }, 200);
 
-    // Compute the real determination now (at "Response Settled"); the loader
-    // just holds the minimum labour-illusion time before revealing it. Vitals
-    // keep streaming in the header throughout.
-    if (window.Polygraph) window.Polygraph.finishResponse();
-
+    // The per-question responses were already scored at each "Response Settled";
+    // the loader just holds the minimum labour-illusion time before the exam's
+    // aggregate determination is revealed. Vitals keep streaming in the header.
     analyzingActive = true;
     typewriterLoop(holder.querySelector('#lt-type-text'));
 
-    setTimeout(showResult, ANALYZING_MIN_MS);
+    setTimeout(showAggregate, ANALYZING_MIN_MS);
   }
 
   function typewriterLoop(typeEl) {
@@ -2365,95 +2442,110 @@ document.getElementById('ld-start-btn').addEventListener('click', () => showScre
     holder.innerHTML = '';
   }
 
-  const CH_LABELS = { scrAmp: 'SCR amp', scl: 'GSR level', hr: 'Heart rate', pulseAmp: 'Pulse amp' };
-
-  function renderResult() {
-    // Use the engine's real determination; fall back only if it's unavailable.
-    const res = (window.Polygraph && window.Polygraph.lastResult) || null;
+  // Render the exam's AGGREGATE determination (relevant-vs-comparison across all
+  // questions) and persist the session. `insufficient` (e.g. no resting baseline,
+  // or missing a usable relevant/comparison pair) is surfaced honestly.
+  function renderAggregate() {
+    const P = window.Polygraph;
+    const agg = P ? P.examAggregate() : null;
     const card = document.getElementById('lt-card');
     card.style.display = 'flex';
 
-    // No resting baseline captured this session → the engine can't establish a
-    // verdict (scoreResponse forces Inconclusive with baselineReady:false). Say
-    // so plainly rather than presenting a hollow "Inconclusive" as a reading.
-    if (res && res.baselineReady === false) {
-      card.className = 'card';
-      card.innerHTML = `
-        <div class="result-badge result-inconclusive">Baseline needed</div>
-        <div class="result-note">No resting baseline has been captured this session, so a reliable verdict can't be established. Run the baseline capture before testing.</div>
-        <button class="again-btn" id="lt-again-btn">Run Again</button>
-      `;
-      document.getElementById('lt-again-btn').addEventListener('click', reset);
-      return;
+    // Persist the finished exam under the current subject.
+    const pid = localStorage.getItem(CURRENT_KEY);
+    const p = pid ? loadProfiles().find(x => x.id === pid) : null;
+    if (P && pid) { try { P.saveExam(pid, p ? p.name : ''); } catch (e) {} }
+
+    // Publish the determination to the Pi's result panel. An insufficient
+    // aggregate is reported honestly as Inconclusive rather than suppressed,
+    // so the panel can never show a stale verdict from a previous exam.
+    if (RESULT_POST_URL) {
+      try {
+        const solid = agg && !agg.insufficient;
+        fetch(RESULT_POST_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          keepalive: true,
+          body: JSON.stringify({
+            determination: solid ? agg.determination : 'Inconclusive',
+            confidence: solid && Number.isFinite(agg.confidence) ? agg.confidence : null,
+            reason: agg ? agg.reason : 'Not enough usable responses to establish a result.',
+            perQuestion: agg ? (agg.perQuestion || []) : [],
+            subject: p ? p.name : '',
+            demo: isDemo
+          })
+        }).catch(() => {});
+      } catch (e) {}
     }
 
-    const label = res ? res.label : 'Inconclusive';
-    const outcome = OUTCOMES.find(o => o.label === label) || OUTCOMES[2];
-    const react = res && Number.isFinite(res.reactivity) ? Math.round(res.reactivity * 100) : null;
-    const conf = res && Number.isFinite(res.confidence) ? Math.round(res.confidence * 100) : null;
+    const actions =
+      '<div class="lt-result-actions">' +
+        '<button class="again-btn" id="lt-again-btn">Run Again</button>' +
+        '<button class="again-btn ghost" id="lt-hist-btn">History</button>' +
+      '</div>';
 
-    // Per-channel z-scores — only channels the engine actually scored (finite z).
-    const ch = (res && res.channels) || {};
-    const rows = ['scrAmp', 'scl', 'hr', 'pulseAmp']
-      .filter(k => ch[k] && Number.isFinite(ch[k].z))
-      .map(k => {
-        const z = ch[k].z;
-        const cls = z >= 1 ? 'z-hot' : z <= -1 ? 'z-cool' : 'z-neutral';
-        const sign = z > 0 ? '+' : '';
-        return `<div class="ch-row"><span class="ch-name">${CH_LABELS[k]}</span>` +
-               `<span class="ch-z ${cls}">${sign}${z.toFixed(2)}σ</span></div>`;
+    if (!agg || agg.insufficient) {
+      card.className = 'card';
+      card.innerHTML =
+        '<div class="result-badge result-inconclusive">Inconclusive</div>' +
+        `<div class="result-note">${esc(agg ? agg.reason : 'Not enough usable responses to establish a result.')}</div>` +
+        actions;
+    } else {
+      const outcome = OUTCOMES.find(o => o.label === agg.determination) || OUTCOMES[2];
+      const conf = Number.isFinite(agg.confidence) ? Math.round(agg.confidence * 100) : null;
+      const rows = (agg.perQuestion || []).map(pq => {
+        const r = Number.isFinite(pq.reactivity) ? Math.round(pq.reactivity * 100) + '%' : '–';
+        const letter = String(pq.type || 'n').charAt(0).toUpperCase();
+        return `<div class="pq-row${pq.usable ? '' : ' q-unused'}">` +
+                 `<span class="pq-type pqt-${pq.type}">${letter}</span>` +
+                 `<span class="pq-text">${esc(pq.text)}</span>` +
+                 `<span class="pq-react">${r}</span></div>`;
       }).join('');
-
-    card.className = 'card ' + outcome.glow;
-    card.innerHTML = `
-      <div class="result-badge ${outcome.badge}">${outcome.label}</div>
-      ${(react != null || conf != null) ? `
-      <div class="result-metrics">
-        ${react != null ? `<div class="metric"><div class="metric-val">${react}%</div><div class="metric-lbl">reactivity</div></div>` : ''}
-        ${conf != null ? `<div class="metric"><div class="metric-val">${conf}%</div><div class="metric-lbl">confidence</div></div>` : ''}
-      </div>` : ''}
-      ${rows ? `<div class="ch-table">${rows}</div>` : ''}
-      <button class="again-btn" id="lt-again-btn">Run Again</button>
-    `;
+      card.className = 'card ' + outcome.glow;
+      card.innerHTML =
+        `<div class="result-badge ${outcome.badge}">${outcome.label}</div>` +
+        (conf != null ? `<div class="result-metrics"><div class="metric"><div class="metric-val">${conf}%</div><div class="metric-lbl">confidence</div></div></div>` : '') +
+        `<div class="result-note" style="margin:-2px 0 14px">${esc(agg.reason)}</div>` +
+        (rows ? `<div class="pq-table">${rows}</div>` : '') +
+        actions;
+    }
     document.getElementById('lt-again-btn').addEventListener('click', reset);
+    const hb = document.getElementById('lt-hist-btn');
+    if (hb) hb.addEventListener('click', () => { if (P) P.stopCharts(); showScreen('screen-history'); });
   }
 
-  function showResult() {
+  function showAggregate() {
     if (!analyzingActive) return; // guard against a double-fire
     stopAnalyzing();
-    renderResult();
+    renderAggregate();
   }
 
   function reset() {
     stopVitals();
-    const card = document.getElementById('lt-card');
-    card.style.display = 'flex';
-    card.className = 'card';
-    card.innerHTML = `
-      <div class="capture-wrap" id="lt-capture-wrap"></div>
-      <button class="action-btn" id="lt-action-btn">Begin Capture</button>
-    `;
-    document.getElementById('lt-action-btn').addEventListener('click', beginCapture);
-    startVitals();   // keep the header vitals live while awaiting the next capture
+    if (window.Polygraph) window.Polygraph.beginExam();   // fresh CQT question set
+    showQuestion();
+    startVitals();   // keep the header vitals live while awaiting each capture
   }
 
   function endSession() {
     stopVitals();
+    if (window.Polygraph) window.Polygraph.stopCharts();
     showScreen('screen-profiles');
   }
 
-  // ── Demo-only: force a determination immediately, from any state ──
+  // ── Demo-only: end the exam now and aggregate whatever has been recorded ──
   function skipToResult() {
     analyzingActive = false;
     clearInterval(gridTimer);
     const holder = document.getElementById('lt-analyzing-holder');
     holder.style.display = 'none';
     holder.innerHTML = '';
-    if (window.Polygraph) window.Polygraph.finishResponse();   // score whatever is buffered
-    renderResult();
+    if (window.Polygraph) window.Polygraph.recordAndAdvance();   // score current window
+    renderAggregate();
   }
 
-  document.getElementById('lt-action-btn').addEventListener('click', beginCapture);
+  // lt-action-btn is (re)created by showQuestion() and wired there, so no static
+  // binding for it here.
   document.getElementById('lt-end-link').addEventListener('click', endSession);
   document.getElementById('lt-skip-btn').addEventListener('click', skipToResult);
   document.getElementById('lt-react-btn').addEventListener('click', () => {
@@ -2463,14 +2555,23 @@ document.getElementById('ld-start-btn').addEventListener('click', () => showScre
   });
 
   screenEnterHandlers['screen-live-test'] = function () {
-    reset();
-    if (window.Polygraph) window.Polygraph.ensureStarted();
+    if (window.Polygraph) { window.Polygraph.ensureStarted(); window.Polygraph.startCharts(); }
+    reset();   // builds a fresh exam, shows the first question, starts vitals
     // The demo react button only makes sense against the synthetic subject.
     document.getElementById('lt-react-btn').style.display =
       (window.Polygraph && window.Polygraph.isDemo) ? '' : 'none';
     const id = localStorage.getItem(CURRENT_KEY);
     const p = loadProfiles().find(x => x.id === id);
     document.getElementById('lt-subject').textContent = p ? p.name : '';
+  };
+
+  // ── History screen controller ──
+  document.getElementById('hist-back').addEventListener('click', () => showScreen('screen-baseline-saved'));
+  screenEnterHandlers['screen-history'] = function () {
+    const id = localStorage.getItem(CURRENT_KEY);
+    const p = id ? loadProfiles().find(x => x.id === id) : null;
+    document.getElementById('hist-subject').textContent = p ? p.name : '';
+    if (window.Polygraph) window.Polygraph.renderHistory(document.getElementById('history-list'), id);
   };
 })();
 </script>
@@ -2484,6 +2585,9 @@ document.getElementById('ld-start-btn').addEventListener('click', () => showScre
 <script type="module">
 import { PolygraphEngine } from './polygraph_engine.js';
 import { makeSource } from './polygraph_source.js';
+import { LiveCharts } from './polygraph_charts.js';
+import { Protocol, SAMPLE_QUESTIONS } from './polygraph_protocol.js';
+import { saveSession, renderHistoryInto } from './polygraph_history.js';
 
 const engine = new PolygraphEngine();
 // Data source resolution:
@@ -2503,7 +2607,17 @@ const wsUrl = wsParam || _autoWs;
 const isDemo = !wsUrl;
 const source = makeSource(wsUrl || 'demo');
 
+// Where a finished determination is published so the Pi's 4" panel can display
+// it. Defaults to the serving host on :8000; override with ?result=<url> or
+// disable with ?result=off. Strictly fire-and-forget — the exam never waits on
+// it and never fails because of it.
+const _resultParam = _q.get('result');
+const RESULT_POST_URL = _resultParam === 'off' ? null
+  : (_resultParam || (location.protocol.startsWith('http')
+      ? `${location.protocol}//${location.hostname}:8000/result` : null));
+
 let started = false, baselineStartT = null, respStart = null;
+let _charts = null, _protocol = null;   // live waveforms + current CQT exam
 
 const Polygraph = {
   engine, isDemo, lastResult: null,
@@ -2569,7 +2683,57 @@ const Polygraph = {
   // Deceptive. No-op on real hardware.
   react() { if (isDemo && source.reactNow) source.reactNow(); },
 
-  end() { source.disconnect(); started = false; baselineStartT = null; respStart = null; engine.reset(); this._setStatus('disconnected'); },
+  // ── Live waveforms (polygraph_charts.js) ──
+  startCharts() {
+    const cv = document.getElementById('lt-waveforms');
+    if (!cv) return;
+    if (!_charts) _charts = new LiveCharts(cv, engine);
+    _charts.start();
+  },
+  stopCharts() { if (_charts) _charts.stop(); },
+
+  // ── Multi-question exam (polygraph_protocol.js — CQT scoring) ──
+  beginExam(questions) {
+    _protocol = new Protocol(questions && questions.length ? questions : SAMPLE_QUESTIONS);
+    return _protocol.current();
+  },
+  currentQuestion() { return _protocol ? _protocol.current() : null; },
+  examProgress() { return _protocol ? _protocol.progress() : { index: 0, total: 0 }; },
+  examComplete() { return _protocol ? _protocol.isComplete : false; },
+  examAggregate() { return _protocol ? _protocol.aggregate() : null; },
+  // Score the window captured since startResponse(), fold it into the protocol,
+  // and report whether the exam is now complete + the next question.
+  recordAndAdvance() {
+    const result = this.finishResponse();          // scores [respStart, latest]
+    if (_protocol) _protocol.recordResponse(result);
+    return {
+      complete: _protocol ? _protocol.isComplete : true,
+      next: _protocol ? _protocol.current() : null,
+      result,
+    };
+  },
+
+  // ── Session history (polygraph_history.js) ──
+  saveExam(profileId, subjectName) {
+    if (!_protocol || !profileId) return null;
+    const agg = _protocol.aggregate();
+    return saveSession(profileId, {
+      determination: agg.determination,
+      label: agg.determination,
+      reactivity: Number.isFinite(agg.relevantMean) ? agg.relevantMean : null,
+      confidence: agg.confidence,
+      baselineReady: !agg.insufficient,
+      channels: this.lastResult ? this.lastResult.channels : null,
+      questions: agg.perQuestion,
+      reason: agg.reason,
+      subjectName: subjectName || '',
+    });
+  },
+  renderHistory(containerEl, profileId) {
+    if (containerEl) renderHistoryInto(containerEl, profileId, {});
+  },
+
+  end() { source.disconnect(); started = false; baselineStartT = null; respStart = null; engine.reset(); if (_charts) _charts.stop(); this._setStatus('disconnected'); },
 };
 
 window.Polygraph = Polygraph;

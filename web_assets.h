@@ -2,7 +2,7 @@
 // Embeds the browser app + ES modules for the ESP32 to serve.
 #pragma once
 
-// polygraph_app.html  (92748 bytes)  -> /
+// polygraph_app.html  (101595 bytes)  -> /
 static const char APP_HTML[] PROGMEM = R"POLY_ASSET_9c1f(
 <!DOCTYPE html>
 <html lang="en">
@@ -1094,6 +1094,34 @@ body.breathing-bg #screen-baseline-focus #hue {
   margin: -8px 0 22px;
   max-width: 300px;
 }
+
+/* ── Live waveforms + multi-question exam + history (backend feature wave) ── */
+#lt-waveforms { width: 100%; height: 200px; display: block; margin: 4px 0 16px; }
+
+.exam-progress { font-size: .7rem; letter-spacing: .07em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 10px; }
+.exam-question { font-size: 1.15rem; line-height: 1.4; color: var(--text-strong); font-weight: 600; margin: 0 0 20px; max-width: 320px; }
+.q-type { font-weight: 700; }
+.q-relevant { color: var(--z-hot); }
+.q-comparison { color: var(--amber); }
+.q-neutral { color: var(--text-soft); }
+
+.pq-table { width: 100%; max-width: 320px; display: flex; flex-direction: column; gap: 7px; margin: 2px 0 20px; }
+.pq-row { display: flex; align-items: center; gap: 10px; font-size: .8rem; border-bottom: 1px solid var(--border-soft); padding-bottom: 6px; }
+.pq-row:last-child { border-bottom: none; padding-bottom: 0; }
+.pq-row.q-unused { opacity: .42; }
+.pq-type { width: 18px; height: 18px; flex-shrink: 0; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: .6rem; font-weight: 700; color: var(--surface); background: var(--text-soft); }
+.pqt-relevant { background: var(--z-hot); }
+.pqt-comparison { background: var(--amber); }
+.pqt-neutral { background: var(--line); }
+.pq-text { flex: 1; text-align: left; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pq-react { font-variant-numeric: tabular-nums; color: var(--text-muted); }
+
+.lt-result-actions { display: flex; gap: 10px; justify-content: center; }
+.again-btn.ghost { background: transparent; border: 1px solid var(--border); color: var(--text-soft); }
+
+#screen-history .page { width: 100%; max-width: 480px; }
+#screen-history .subject { margin-bottom: 16px; }
+#history-list { display: flex; flex-direction: column; gap: 10px; margin: 8px 0 22px; text-align: left; }
 </style>
 </head>
 <body>
@@ -1281,6 +1309,7 @@ body.breathing-bg #screen-baseline-focus #hue {
 
     <div class="actions">
       <button class="btn-primary" id="bs-begin-test">Begin Test</button>
+      <button class="btn-secondary" id="bs-history">View History</button>
       <button class="btn-secondary" id="bs-back-profiles">Back to Profiles</button>
     </div>
   </div>
@@ -1298,6 +1327,9 @@ body.breathing-bg #screen-baseline-focus #hue {
     <div class="subject" id="lt-subject"></div>
     <div class="subject" id="lt-vitals" style="font-size:.72rem;letter-spacing:.05em;margin-top:-22px;min-height:1em"></div>
 
+    <!-- Live physiological waveforms (EDA / pulse / HR) — rendered by polygraph_charts.js. -->
+    <canvas id="lt-waveforms"></canvas>
+
     <div class="card" id="lt-card">
       <div class="capture-wrap" id="lt-capture-wrap"></div>
       <button class="action-btn" id="lt-action-btn">Begin Capture</button>
@@ -1306,6 +1338,18 @@ body.breathing-bg #screen-baseline-focus #hue {
     <div class="analyzing-holder" id="lt-analyzing-holder" style="display:none"></div>
 
     <button class="end-link" id="lt-end-link" style="margin-top:22px">End session</button>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     SCREEN: history — past exam sessions for the current subject
+     ════════════════════════════════════════════════════════════════════ -->
+<section class="screen" id="screen-history">
+  <div class="page">
+    <div class="eyebrow">Session History</div>
+    <div class="subject" id="hist-subject"></div>
+    <div id="history-list"></div>
+    <button class="end-link" id="hist-back">Back</button>
   </div>
 </section>
 
@@ -2240,6 +2284,7 @@ document.getElementById('ld-start-btn').addEventListener('click', () => showScre
    ══════════════════════════════════════════════════════════════════════ */
 (function () {
   document.getElementById('bs-begin-test').addEventListener('click', () => showScreen('screen-live-test'));
+  document.getElementById('bs-history').addEventListener('click', () => showScreen('screen-history'));
   document.getElementById('bs-back-profiles').addEventListener('click', () => showScreen('screen-profiles'));
 
   screenEnterHandlers['screen-baseline-saved'] = function () {
@@ -2267,6 +2312,8 @@ document.getElementById('ld-start-btn').addEventListener('click', () => showScre
     { label: 'Deceptive', badge: 'result-deceptive', glow: 'glow-deceptive' },
     { label: 'Inconclusive', badge: 'result-inconclusive', glow: 'glow-inconclusive' }
   ];
+  const TYPE_LABEL = { relevant: 'Relevant', comparison: 'Comparison', neutral: 'Neutral' };
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   const GRID_PATH = [4, 1, 0, 3, 6, 7, 8, 5, 2, 1, 4, 7, 6, 3, 0, 1, 2, 5, 8, 7, 4];
   const WORD = 'Analyzing';
@@ -2281,6 +2328,30 @@ document.getElementById('ld-start-btn').addEventListener('click', () => showScre
   function startVitals() { stopVitals(); vitalsTimer = startVitalsPoll('lt-vitals', 'screen-live-test'); }
   function stopVitals() { if (vitalsTimer) clearInterval(vitalsTimer); vitalsTimer = null; }
 
+  // Render the current exam question (from the CQT protocol) with a fresh
+  // Begin Capture button. Called on entry and between questions.
+  function showQuestion() {
+    const P = window.Polygraph;
+    const q = P ? P.currentQuestion() : null;
+    const prog = P ? P.examProgress() : { index: 0, total: 0 };
+    const card = document.getElementById('lt-card');
+    card.style.display = 'flex';
+    card.className = 'card';
+    if (!q) {
+      card.innerHTML = '<div class="result-note">No questions are configured for this exam.</div>' +
+        '<button class="again-btn" id="lt-again-btn">Run Again</button>';
+      document.getElementById('lt-again-btn').addEventListener('click', reset);
+      return;
+    }
+    card.innerHTML =
+      `<div class="exam-progress">Question ${prog.index + 1} of ${prog.total} · ` +
+        `<span class="q-type q-${q.type}">${TYPE_LABEL[q.type] || 'Question'}</span></div>` +
+      `<div class="exam-question">${esc(q.text)}</div>` +
+      '<div class="capture-wrap" id="lt-capture-wrap"></div>' +
+      '<button class="action-btn" id="lt-action-btn">Begin Capture</button>';
+    document.getElementById('lt-action-btn').addEventListener('click', beginCapture);
+  }
+
   function beginCapture() {
     const captureWrap = document.getElementById('lt-capture-wrap');
     const btn = document.getElementById('lt-action-btn');
@@ -2294,8 +2365,16 @@ document.getElementById('ld-start-btn').addEventListener('click', () => showScre
     setTimeout(() => {
       btn.disabled = false;
       btn.textContent = 'Response Settled';
-      btn.onclick = startAnalyzing;
+      btn.onclick = settleResponse;
     }, CAPTURE_MIN_MS);
+  }
+
+  // Score the just-captured window, fold it into the protocol, then show the
+  // next question — or, when the exam is complete, analyze → aggregate verdict.
+  function settleResponse() {
+    const st = window.Polygraph ? window.Polygraph.recordAndAdvance() : { complete: true };
+    if (st && !st.complete) showQuestion();
+    else startAnalyzing();
   }
 
   function startAnalyzing() {
@@ -2323,15 +2402,13 @@ document.getElementById('ld-start-btn').addEventListener('click', () => showScre
       step++;
     }, 200);
 
-    // Compute the real determination now (at "Response Settled"); the loader
-    // just holds the minimum labour-illusion time before revealing it. Vitals
-    // keep streaming in the header throughout.
-    if (window.Polygraph) window.Polygraph.finishResponse();
-
+    // The per-question responses were already scored at each "Response Settled";
+    // the loader just holds the minimum labour-illusion time before the exam's
+    // aggregate determination is revealed. Vitals keep streaming in the header.
     analyzingActive = true;
     typewriterLoop(holder.querySelector('#lt-type-text'));
 
-    setTimeout(showResult, ANALYZING_MIN_MS);
+    setTimeout(showAggregate, ANALYZING_MIN_MS);
   }
 
   function typewriterLoop(typeEl) {
@@ -2371,95 +2448,110 @@ document.getElementById('ld-start-btn').addEventListener('click', () => showScre
     holder.innerHTML = '';
   }
 
-  const CH_LABELS = { scrAmp: 'SCR amp', scl: 'GSR level', hr: 'Heart rate', pulseAmp: 'Pulse amp' };
-
-  function renderResult() {
-    // Use the engine's real determination; fall back only if it's unavailable.
-    const res = (window.Polygraph && window.Polygraph.lastResult) || null;
+  // Render the exam's AGGREGATE determination (relevant-vs-comparison across all
+  // questions) and persist the session. `insufficient` (e.g. no resting baseline,
+  // or missing a usable relevant/comparison pair) is surfaced honestly.
+  function renderAggregate() {
+    const P = window.Polygraph;
+    const agg = P ? P.examAggregate() : null;
     const card = document.getElementById('lt-card');
     card.style.display = 'flex';
 
-    // No resting baseline captured this session → the engine can't establish a
-    // verdict (scoreResponse forces Inconclusive with baselineReady:false). Say
-    // so plainly rather than presenting a hollow "Inconclusive" as a reading.
-    if (res && res.baselineReady === false) {
-      card.className = 'card';
-      card.innerHTML = `
-        <div class="result-badge result-inconclusive">Baseline needed</div>
-        <div class="result-note">No resting baseline has been captured this session, so a reliable verdict can't be established. Run the baseline capture before testing.</div>
-        <button class="again-btn" id="lt-again-btn">Run Again</button>
-      `;
-      document.getElementById('lt-again-btn').addEventListener('click', reset);
-      return;
+    // Persist the finished exam under the current subject.
+    const pid = localStorage.getItem(CURRENT_KEY);
+    const p = pid ? loadProfiles().find(x => x.id === pid) : null;
+    if (P && pid) { try { P.saveExam(pid, p ? p.name : ''); } catch (e) {} }
+
+    // Publish the determination to the Pi's result panel. An insufficient
+    // aggregate is reported honestly as Inconclusive rather than suppressed,
+    // so the panel can never show a stale verdict from a previous exam.
+    if (RESULT_POST_URL) {
+      try {
+        const solid = agg && !agg.insufficient;
+        fetch(RESULT_POST_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          keepalive: true,
+          body: JSON.stringify({
+            determination: solid ? agg.determination : 'Inconclusive',
+            confidence: solid && Number.isFinite(agg.confidence) ? agg.confidence : null,
+            reason: agg ? agg.reason : 'Not enough usable responses to establish a result.',
+            perQuestion: agg ? (agg.perQuestion || []) : [],
+            subject: p ? p.name : '',
+            demo: isDemo
+          })
+        }).catch(() => {});
+      } catch (e) {}
     }
 
-    const label = res ? res.label : 'Inconclusive';
-    const outcome = OUTCOMES.find(o => o.label === label) || OUTCOMES[2];
-    const react = res && Number.isFinite(res.reactivity) ? Math.round(res.reactivity * 100) : null;
-    const conf = res && Number.isFinite(res.confidence) ? Math.round(res.confidence * 100) : null;
+    const actions =
+      '<div class="lt-result-actions">' +
+        '<button class="again-btn" id="lt-again-btn">Run Again</button>' +
+        '<button class="again-btn ghost" id="lt-hist-btn">History</button>' +
+      '</div>';
 
-    // Per-channel z-scores — only channels the engine actually scored (finite z).
-    const ch = (res && res.channels) || {};
-    const rows = ['scrAmp', 'scl', 'hr', 'pulseAmp']
-      .filter(k => ch[k] && Number.isFinite(ch[k].z))
-      .map(k => {
-        const z = ch[k].z;
-        const cls = z >= 1 ? 'z-hot' : z <= -1 ? 'z-cool' : 'z-neutral';
-        const sign = z > 0 ? '+' : '';
-        return `<div class="ch-row"><span class="ch-name">${CH_LABELS[k]}</span>` +
-               `<span class="ch-z ${cls}">${sign}${z.toFixed(2)}σ</span></div>`;
+    if (!agg || agg.insufficient) {
+      card.className = 'card';
+      card.innerHTML =
+        '<div class="result-badge result-inconclusive">Inconclusive</div>' +
+        `<div class="result-note">${esc(agg ? agg.reason : 'Not enough usable responses to establish a result.')}</div>` +
+        actions;
+    } else {
+      const outcome = OUTCOMES.find(o => o.label === agg.determination) || OUTCOMES[2];
+      const conf = Number.isFinite(agg.confidence) ? Math.round(agg.confidence * 100) : null;
+      const rows = (agg.perQuestion || []).map(pq => {
+        const r = Number.isFinite(pq.reactivity) ? Math.round(pq.reactivity * 100) + '%' : '–';
+        const letter = String(pq.type || 'n').charAt(0).toUpperCase();
+        return `<div class="pq-row${pq.usable ? '' : ' q-unused'}">` +
+                 `<span class="pq-type pqt-${pq.type}">${letter}</span>` +
+                 `<span class="pq-text">${esc(pq.text)}</span>` +
+                 `<span class="pq-react">${r}</span></div>`;
       }).join('');
-
-    card.className = 'card ' + outcome.glow;
-    card.innerHTML = `
-      <div class="result-badge ${outcome.badge}">${outcome.label}</div>
-      ${(react != null || conf != null) ? `
-      <div class="result-metrics">
-        ${react != null ? `<div class="metric"><div class="metric-val">${react}%</div><div class="metric-lbl">reactivity</div></div>` : ''}
-        ${conf != null ? `<div class="metric"><div class="metric-val">${conf}%</div><div class="metric-lbl">confidence</div></div>` : ''}
-      </div>` : ''}
-      ${rows ? `<div class="ch-table">${rows}</div>` : ''}
-      <button class="again-btn" id="lt-again-btn">Run Again</button>
-    `;
+      card.className = 'card ' + outcome.glow;
+      card.innerHTML =
+        `<div class="result-badge ${outcome.badge}">${outcome.label}</div>` +
+        (conf != null ? `<div class="result-metrics"><div class="metric"><div class="metric-val">${conf}%</div><div class="metric-lbl">confidence</div></div></div>` : '') +
+        `<div class="result-note" style="margin:-2px 0 14px">${esc(agg.reason)}</div>` +
+        (rows ? `<div class="pq-table">${rows}</div>` : '') +
+        actions;
+    }
     document.getElementById('lt-again-btn').addEventListener('click', reset);
+    const hb = document.getElementById('lt-hist-btn');
+    if (hb) hb.addEventListener('click', () => { if (P) P.stopCharts(); showScreen('screen-history'); });
   }
 
-  function showResult() {
+  function showAggregate() {
     if (!analyzingActive) return; // guard against a double-fire
     stopAnalyzing();
-    renderResult();
+    renderAggregate();
   }
 
   function reset() {
     stopVitals();
-    const card = document.getElementById('lt-card');
-    card.style.display = 'flex';
-    card.className = 'card';
-    card.innerHTML = `
-      <div class="capture-wrap" id="lt-capture-wrap"></div>
-      <button class="action-btn" id="lt-action-btn">Begin Capture</button>
-    `;
-    document.getElementById('lt-action-btn').addEventListener('click', beginCapture);
-    startVitals();   // keep the header vitals live while awaiting the next capture
+    if (window.Polygraph) window.Polygraph.beginExam();   // fresh CQT question set
+    showQuestion();
+    startVitals();   // keep the header vitals live while awaiting each capture
   }
 
   function endSession() {
     stopVitals();
+    if (window.Polygraph) window.Polygraph.stopCharts();
     showScreen('screen-profiles');
   }
 
-  // ── Demo-only: force a determination immediately, from any state ──
+  // ── Demo-only: end the exam now and aggregate whatever has been recorded ──
   function skipToResult() {
     analyzingActive = false;
     clearInterval(gridTimer);
     const holder = document.getElementById('lt-analyzing-holder');
     holder.style.display = 'none';
     holder.innerHTML = '';
-    if (window.Polygraph) window.Polygraph.finishResponse();   // score whatever is buffered
-    renderResult();
+    if (window.Polygraph) window.Polygraph.recordAndAdvance();   // score current window
+    renderAggregate();
   }
 
-  document.getElementById('lt-action-btn').addEventListener('click', beginCapture);
+  // lt-action-btn is (re)created by showQuestion() and wired there, so no static
+  // binding for it here.
   document.getElementById('lt-end-link').addEventListener('click', endSession);
   document.getElementById('lt-skip-btn').addEventListener('click', skipToResult);
   document.getElementById('lt-react-btn').addEventListener('click', () => {
@@ -2469,14 +2561,23 @@ document.getElementById('ld-start-btn').addEventListener('click', () => showScre
   });
 
   screenEnterHandlers['screen-live-test'] = function () {
-    reset();
-    if (window.Polygraph) window.Polygraph.ensureStarted();
+    if (window.Polygraph) { window.Polygraph.ensureStarted(); window.Polygraph.startCharts(); }
+    reset();   // builds a fresh exam, shows the first question, starts vitals
     // The demo react button only makes sense against the synthetic subject.
     document.getElementById('lt-react-btn').style.display =
       (window.Polygraph && window.Polygraph.isDemo) ? '' : 'none';
     const id = localStorage.getItem(CURRENT_KEY);
     const p = loadProfiles().find(x => x.id === id);
     document.getElementById('lt-subject').textContent = p ? p.name : '';
+  };
+
+  // ── History screen controller ──
+  document.getElementById('hist-back').addEventListener('click', () => showScreen('screen-baseline-saved'));
+  screenEnterHandlers['screen-history'] = function () {
+    const id = localStorage.getItem(CURRENT_KEY);
+    const p = id ? loadProfiles().find(x => x.id === id) : null;
+    document.getElementById('hist-subject').textContent = p ? p.name : '';
+    if (window.Polygraph) window.Polygraph.renderHistory(document.getElementById('history-list'), id);
   };
 })();
 </script>
@@ -2490,6 +2591,9 @@ document.getElementById('ld-start-btn').addEventListener('click', () => showScre
 <script type="module">
 import { PolygraphEngine } from './polygraph_engine.js';
 import { makeSource } from './polygraph_source.js';
+import { LiveCharts } from './polygraph_charts.js';
+import { Protocol, SAMPLE_QUESTIONS } from './polygraph_protocol.js';
+import { saveSession, renderHistoryInto } from './polygraph_history.js';
 
 const engine = new PolygraphEngine();
 // Data source resolution:
@@ -2509,7 +2613,17 @@ const wsUrl = wsParam || _autoWs;
 const isDemo = !wsUrl;
 const source = makeSource(wsUrl || 'demo');
 
+// Where a finished determination is published so the Pi's 4" panel can display
+// it. Defaults to the serving host on :8000; override with ?result=<url> or
+// disable with ?result=off. Strictly fire-and-forget — the exam never waits on
+// it and never fails because of it.
+const _resultParam = _q.get('result');
+const RESULT_POST_URL = _resultParam === 'off' ? null
+  : (_resultParam || (location.protocol.startsWith('http')
+      ? `${location.protocol}//${location.hostname}:8000/result` : null));
+
 let started = false, baselineStartT = null, respStart = null;
+let _charts = null, _protocol = null;   // live waveforms + current CQT exam
 
 const Polygraph = {
   engine, isDemo, lastResult: null,
@@ -2575,7 +2689,57 @@ const Polygraph = {
   // Deceptive. No-op on real hardware.
   react() { if (isDemo && source.reactNow) source.reactNow(); },
 
-  end() { source.disconnect(); started = false; baselineStartT = null; respStart = null; engine.reset(); this._setStatus('disconnected'); },
+  // ── Live waveforms (polygraph_charts.js) ──
+  startCharts() {
+    const cv = document.getElementById('lt-waveforms');
+    if (!cv) return;
+    if (!_charts) _charts = new LiveCharts(cv, engine);
+    _charts.start();
+  },
+  stopCharts() { if (_charts) _charts.stop(); },
+
+  // ── Multi-question exam (polygraph_protocol.js — CQT scoring) ──
+  beginExam(questions) {
+    _protocol = new Protocol(questions && questions.length ? questions : SAMPLE_QUESTIONS);
+    return _protocol.current();
+  },
+  currentQuestion() { return _protocol ? _protocol.current() : null; },
+  examProgress() { return _protocol ? _protocol.progress() : { index: 0, total: 0 }; },
+  examComplete() { return _protocol ? _protocol.isComplete : false; },
+  examAggregate() { return _protocol ? _protocol.aggregate() : null; },
+  // Score the window captured since startResponse(), fold it into the protocol,
+  // and report whether the exam is now complete + the next question.
+  recordAndAdvance() {
+    const result = this.finishResponse();          // scores [respStart, latest]
+    if (_protocol) _protocol.recordResponse(result);
+    return {
+      complete: _protocol ? _protocol.isComplete : true,
+      next: _protocol ? _protocol.current() : null,
+      result,
+    };
+  },
+
+  // ── Session history (polygraph_history.js) ──
+  saveExam(profileId, subjectName) {
+    if (!_protocol || !profileId) return null;
+    const agg = _protocol.aggregate();
+    return saveSession(profileId, {
+      determination: agg.determination,
+      label: agg.determination,
+      reactivity: Number.isFinite(agg.relevantMean) ? agg.relevantMean : null,
+      confidence: agg.confidence,
+      baselineReady: !agg.insufficient,
+      channels: this.lastResult ? this.lastResult.channels : null,
+      questions: agg.perQuestion,
+      reason: agg.reason,
+      subjectName: subjectName || '',
+    });
+  },
+  renderHistory(containerEl, profileId) {
+    if (containerEl) renderHistoryInto(containerEl, profileId, {});
+  },
+
+  end() { source.disconnect(); started = false; baselineStartT = null; respStart = null; engine.reset(); if (_charts) _charts.stop(); this._setStatus('disconnected'); },
 };
 
 window.Polygraph = Polygraph;
@@ -3463,10 +3627,1157 @@ function clamp(v, lo, hi) { return Math.min(Math.max(v, lo), hi); }
 
 )POLY_ASSET_9c1f";
 
+// polygraph_charts.js  (19321 bytes)  -> /polygraph_charts.js
+static const char CHARTS_JS[] PROGMEM = R"POLY_ASSET_9c1f(
+/* ══════════════════════════════════════════════════════════════════════════
+   polygraph_charts.js — live real-time waveform strip charts
+   ───────────────────────────────────────────────────────────────────────────
+   A self-contained, dependency-free ES module that renders THREE stacked
+   scrolling strip charts into a single <canvas>, driven live off the engine's
+   ring buffer (engine.buf) and engine.liveVitals().
+
+     1) EDA / GSR  — raw gsr channel, lightly smoothed, autoscaled to its
+                     recent range.
+     2) Pulse (PPG) — the ir channel band-limited to the cardiac band (a cheap
+                      moving-average detrend + light smoothing) so individual
+                      heartbeats are visible, normalized to the panel.
+     3) HR trend   — engine.liveVitals().hr sampled over time (bpm), with the
+                     current value labelled.
+
+   Newest data is on the RIGHT; the view shows roughly the last `windowSec`
+   seconds (default 8 s). Rendering is DPI-aware (scaled by
+   window.devicePixelRatio) and driven by requestAnimationFrame. It PAUSES
+   cleanly when .stop() is called or when the canvas is detached from the DOM,
+   and only ever processes the currently-visible slice each frame (cheap).
+
+   Contract it depends on (see polygraph_engine.js):
+     • engine.buf = { t:[ms], gsr:[raw], ir:[raw] }  — chronological, newest
+       last, ~100 Hz, ~45 s deep.
+     • engine.liveVitals() → { hr, scl, sqi } | null  — null while warming up.
+
+   Usage:
+     import { LiveCharts } from './polygraph_charts.js';   // (also default export)
+     const charts = new LiveCharts(canvasEl, engine);
+     charts.start();   // when the capture screen becomes active
+     charts.stop();    // when leaving the screen
+   ══════════════════════════════════════════════════════════════════════════ */
+
+'use strict';
+
+/* ─── Palette resolution ───────────────────────────────────────────────────
+   Read the app's CSS custom properties off the canvas's computed style so the
+   charts track the app theme, with sensible fallbacks when a variable is
+   absent (e.g. the standalone demo harness). ────────────────────────────── */
+const PALETTE_KEYS = {
+  eda:  ['--accent-deep', '#c9a99a'],   // EDA/GSR trace
+  pulse:['--heart',       '#d98b82'],   // Pulse (PPG) trace
+  hr:   ['--green-deep',  '#6fae8b'],   // HR trend line
+  grid: ['--border-soft', '#f2e9dd'],   // gridlines / baselines
+  text: ['--text-muted',  '#a89a8c'],   // labels
+};
+
+function resolvePalette(el) {
+  let cs = null;
+  try { cs = getComputedStyle(el); } catch (e) { /* no DOM style (tests) */ }
+  const out = {};
+  for (const key in PALETTE_KEYS) {
+    const [varName, fallback] = PALETTE_KEYS[key];
+    let v = '';
+    if (cs) { try { v = cs.getPropertyValue(varName).trim(); } catch (e) {} }
+    out[key] = v || fallback;
+  }
+  return out;
+}
+
+/* ─── Small numeric helpers ───────────────────────────────────────────────── */
+function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
+// Exponential ease of a stored value toward a target — smooths autoscale so
+// the vertical range glides instead of snapping frame-to-frame.
+function ease(cur, target, k) { return cur + (target - cur) * k; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   LiveCharts
+   ══════════════════════════════════════════════════════════════════════════ */
+export class LiveCharts {
+  /**
+   * @param {HTMLCanvasElement} canvasEl  target canvas (sized via CSS)
+   * @param {object} engine               the PolygraphEngine instance
+   * @param {object} [opts]
+   *   windowSec   {number} visible span in seconds            (default 8)
+   *   hrSampleMs  {number} how often to sample liveVitals()    (default 500)
+   *   panelGap    {number} px gap between the three panels      (default 10)
+   *   lineWidth   {number} trace stroke width in CSS px         (default 1.5)
+   *   showGrid    {boolean} draw faint baselines/gridlines      (default true)
+   */
+  constructor(canvasEl, engine, opts = {}) {
+    if (!canvasEl) throw new Error('LiveCharts: canvas element required');
+    this.canvas = canvasEl;
+    this.engine = engine;
+    this.ctx = canvasEl.getContext('2d');
+
+    this.windowSec  = opts.windowSec  != null ? opts.windowSec  : 8;
+    this.hrSampleMs = opts.hrSampleMs != null ? opts.hrSampleMs : 500;
+    this.panelGap   = opts.panelGap   != null ? opts.panelGap   : 10;
+    this.lineWidth  = opts.lineWidth  != null ? opts.lineWidth  : 1.5;
+    this.showGrid   = opts.showGrid   !== false;
+
+    this.colors = resolvePalette(canvasEl);
+
+    // Backing-store size cache so we only resize (and clear) the canvas when
+    // its CSS box or the device pixel ratio actually changes.
+    this._cssW = 0; this._cssH = 0; this._dpr = 0;
+
+    // Eased vertical autoscale state, per panel.
+    this._edaScale   = null;              // { min, max }
+    this._pulseAmp   = 1;                 // eased peak |amplitude| for the pulse panel
+    this._hrScale    = null;              // { min, max } bpm
+
+    // HR trend history — { t:[deviceMs], hr:[bpm] }, trimmed to the view.
+    this._hr = { t: [], hr: [] };
+    this._lastHrSampleAt = 0;             // performance.now() throttle
+    this._currentHr = null;               // most-recent finite hr, for the label
+
+    this._running = false;
+    this._raf = 0;
+    this._frame = this._frame.bind(this);
+  }
+
+  /* ── lifecycle ────────────────────────────────────────────────────────── */
+
+  start() {
+    if (this._running) return;
+    this._running = true;
+    this._lastHrSampleAt = 0;             // sample HR promptly on resume
+    this._raf = requestAnimationFrame(this._frame);
+  }
+
+  stop() {
+    this._running = false;
+    if (this._raf) { cancelAnimationFrame(this._raf); this._raf = 0; }
+  }
+
+  /* ── per-frame render loop ────────────────────────────────────────────── */
+
+  _frame(now) {
+    if (!this._running) return;
+
+    // Canvas detached from the document → pause cleanly (no reschedule). A
+    // later start() resumes it.
+    if (!this.canvas.isConnected) { this._running = false; this._raf = 0; return; }
+
+    try { this._resizeIfNeeded(); } catch (e) {}
+
+    // Hidden / zero-size (e.g. an inactive screen with display:none): keep the
+    // loop alive cheaply but skip drawing until it has a real box again.
+    if (this._cssW > 0 && this._cssH > 0) {
+      this._sampleHR(now || (typeof performance !== 'undefined' ? performance.now() : Date.now()));
+      try { this._draw(); } catch (e) { /* never let one frame kill the loop */ }
+    }
+
+    this._raf = requestAnimationFrame(this._frame);
+  }
+
+  // Match the backing store to the CSS box × devicePixelRatio, so 1 canvas unit
+  // == 1 CSS px after the transform below (crisp on retina / high-DPI).
+  _resizeIfNeeded() {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = this.canvas.clientWidth  || 0;
+    const cssH = this.canvas.clientHeight || 0;
+    if (cssW === this._cssW && cssH === this._cssH && dpr === this._dpr) return;
+    this._cssW = cssW; this._cssH = cssH; this._dpr = dpr;
+    this.canvas.width  = Math.max(1, Math.round(cssW * dpr));
+    this.canvas.height = Math.max(1, Math.round(cssH * dpr));
+    // All drawing below is expressed in CSS pixels.
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  /* ── HR trend sampling (throttled; liveVitals() is comparatively costly) ── */
+  _sampleHR(now) {
+    if (now - this._lastHrSampleAt < this.hrSampleMs) return;
+    this._lastHrSampleAt = now;
+    let v = null;
+    try { v = this.engine.liveVitals && this.engine.liveVitals(); } catch (e) {}
+    if (!v || !Number.isFinite(v.hr)) return;
+    const tEnd = this._latestMs();
+    this._hr.t.push(tEnd);
+    this._hr.hr.push(v.hr);
+    this._currentHr = v.hr;
+    // Trim history older than twice the view so the arrays stay small.
+    const cutoff = tEnd - this.windowSec * 2000;
+    let drop = 0;
+    while (drop < this._hr.t.length && this._hr.t[drop] < cutoff) drop++;
+    if (drop > 0) { this._hr.t.splice(0, drop); this._hr.hr.splice(0, drop); }
+  }
+
+  _latestMs() {
+    const t = this.engine && this.engine.buf && this.engine.buf.t;
+    return (t && t.length) ? t[t.length - 1] : 0;
+  }
+
+  /* ── main draw ────────────────────────────────────────────────────────── */
+  _draw() {
+    const ctx = this.ctx, W = this._cssW, H = this._cssH;
+    ctx.clearRect(0, 0, W, H);                 // transparent background
+
+    const buf = this.engine && this.engine.buf;
+    const n = buf && buf.t ? buf.t.length : 0;
+    const tEnd = n ? buf.t[n - 1] : 0;
+    const windowMs = this.windowSec * 1000;
+    const tStart = tEnd - windowMs;
+
+    // Three equal panels stacked vertically with gaps between them.
+    const gap = this.panelGap;
+    const panelH = (H - gap * 2) / 3;
+    const panels = [0, 1, 2].map(i => ({ top: i * (panelH + gap), h: panelH }));
+
+    // Time → x maps oldest-visible (tStart) to the left edge, newest (tEnd) to
+    // the right edge, so the trace scrolls right-to-left.
+    const xForT = (t) => (windowMs > 0 ? (t - tStart) / windowMs * W : W);
+
+    // First buffer index that falls inside the visible window (scan back from
+    // the end so cost is O(visible), not O(buffer)).
+    let startIdx = n;
+    while (startIdx > 0 && buf.t[startIdx - 1] >= tStart) startIdx--;
+    const visCount = n - startIdx;
+
+    // Effective sample rate over the visible slice — used to size the pulse
+    // filter windows without assuming exactly 100 Hz.
+    let fsEst = 100;
+    if (visCount >= 2) {
+      const span = (buf.t[n - 1] - buf.t[startIdx]) / 1000;
+      if (span > 0) fsEst = (visCount - 1) / span;
+    }
+    const haveSecond = visCount >= fsEst * 0.9;   // ~≥1 s of data present
+
+    /* ── Panel 1: EDA / GSR — lightly smoothed, autoscaled ── */
+    this._drawEDA(panels[0], buf, startIdx, n, xForT, haveSecond);
+
+    /* ── Panel 2: Pulse — band-limited ir, normalized ── */
+    this._drawPulse(panels[1], buf, startIdx, n, xForT, fsEst, haveSecond);
+
+    /* ── Panel 3: HR trend ── */
+    this._drawHR(panels[2], xForT, tStart, tEnd);
+  }
+
+  /* Panel chrome: faint baseline + the channel label. Returns the inner y-band
+     (below the label) available for the waveform. */
+  _panelFrame(p, label, labelColor) {
+    const ctx = this.ctx, W = this._cssW;
+    if (this.showGrid) {
+      ctx.save();
+      ctx.strokeStyle = this.colors.grid;
+      ctx.globalAlpha = 0.9;
+      ctx.lineWidth = 1;
+      const midY = Math.round(p.top + p.h / 2) + 0.5;   // crisp 1px line
+      ctx.beginPath(); ctx.moveTo(0, midY); ctx.lineTo(W, midY); ctx.stroke();
+      ctx.restore();
+    }
+    ctx.save();
+    ctx.font = '600 11px system-ui, -apple-system, "Segoe UI", sans-serif';
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = labelColor || this.colors.text;
+    ctx.fillText(label, 2, p.top + 2);
+    ctx.restore();
+    const pad = 15;                          // reserve room for the label at top
+    return { y0: p.top + pad, y1: p.top + p.h - 3 };
+  }
+
+  // Draw a faint flat baseline in a panel's inner band (warming-up state).
+  _drawBaseline(band) {
+    const ctx = this.ctx, W = this._cssW;
+    ctx.save();
+    ctx.strokeStyle = this.colors.grid;
+    ctx.globalAlpha = 0.7;
+    ctx.lineWidth = 1;
+    const y = Math.round((band.y0 + band.y1) / 2) + 0.5;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    ctx.restore();
+  }
+
+  /* ── EDA / GSR ─────────────────────────────────────────────────────────── */
+  _drawEDA(p, buf, startIdx, n, xForT, haveSecond) {
+    const band = this._panelFrame(p, 'EDA', this.colors.text);
+    if (!haveSecond) { this._drawBaseline(band); return; }
+
+    // Light moving-average smoothing (~80 ms) over the visible gsr slice.
+    const vis = n - startIdx;
+    const win = clamp(Math.round(vis / (this.windowSec * 12.5)) | 0, 1, 25); // ~fs*0.08
+    const xs = new Float64Array(vis);
+    const ys = new Float64Array(vis);
+    let mn = Infinity, mx = -Infinity;
+    for (let i = 0; i < vis; i++) {
+      const idx = startIdx + i;
+      // Trailing moving average (cheap, causal).
+      let acc = 0, cnt = 0;
+      for (let k = i - win + 1; k <= i; k++) {
+        if (k >= 0) { acc += buf.gsr[startIdx + k]; cnt++; }
+      }
+      const v = acc / cnt;
+      xs[i] = xForT(buf.t[idx]);
+      ys[i] = v;
+      if (v < mn) mn = v; if (v > mx) mx = v;
+    }
+
+    // Eased autoscale with a minimum span so a flat signal doesn't fill the
+    // panel with noise.
+    let span = mx - mn; if (!(span > 0)) span = 1;
+    const padSpan = span * 0.15;
+    const tMin = mn - padSpan, tMax = mx + padSpan;
+    if (!this._edaScale) this._edaScale = { min: tMin, max: tMax };
+    else {
+      this._edaScale.min = ease(this._edaScale.min, tMin, 0.08);
+      this._edaScale.max = ease(this._edaScale.max, tMax, 0.08);
+    }
+    this._strokeTrace(xs, ys, this._edaScale.min, this._edaScale.max, band, this.colors.eda, vis);
+  }
+
+  /* ── Pulse (PPG) ───────────────────────────────────────────────────────── */
+  _drawPulse(p, buf, startIdx, n, xForT, fsEst, haveSecond) {
+    const band = this._panelFrame(p, 'Pulse', this.colors.text);
+    if (!haveSecond) { this._drawBaseline(band); return; }
+
+    const vis = n - startIdx;
+    // Detrend: subtract a ~0.55 s trailing moving average (a high-pass with a
+    // ~0.8 Hz corner) to kill DC + respiration; then a short 5-tap smooth to
+    // tame ADC noise. What's left is the cardiac band — visible heartbeats.
+    const wHi = clamp(Math.round(fsEst * 0.55), 5, 400);
+    const wLo = clamp(Math.round(fsEst * 0.05), 1, 9);
+
+    const ir = buf.ir, t = buf.t;
+    const hp = new Float64Array(vis);
+    let runAcc = 0;                 // rolling sum for the high-pass MA
+    for (let i = 0; i < vis; i++) {
+      const idx = startIdx + i;
+      runAcc += ir[idx];
+      if (i >= wHi) runAcc -= ir[idx - wHi];
+      const cnt = Math.min(i + 1, wHi);
+      hp[i] = ir[idx] - runAcc / cnt;
+    }
+    // Short smoothing pass + collect x + peak amplitude.
+    const xs = new Float64Array(vis);
+    const ys = new Float64Array(vis);
+    let peak = 1e-6;
+    let sAcc = 0;
+    for (let i = 0; i < vis; i++) {
+      sAcc += hp[i];
+      if (i >= wLo) sAcc -= hp[i - wLo];
+      const cnt = Math.min(i + 1, wLo);
+      const v = sAcc / cnt;
+      xs[i] = xForT(t[startIdx + i]);
+      ys[i] = v;
+      const a = v < 0 ? -v : v;
+      if (a > peak) peak = a;
+    }
+
+    // Eased amplitude normalization; signal is centred on 0 in the panel.
+    this._pulseAmp = ease(this._pulseAmp, peak, 0.1);
+    const amp = this._pulseAmp > 1e-6 ? this._pulseAmp : peak;
+    // Map centred so 0 sits mid-band; ±amp reaches ~90% of the half-height.
+    this._strokeTrace(xs, ys, -amp / 0.9, amp / 0.9, band, this.colors.pulse, vis);
+  }
+
+  /* ── HR trend ──────────────────────────────────────────────────────────── */
+  _drawHR(p, xForT, tStart, tEnd) {
+    const hrLabel = 'HR ' + (this._currentHr != null ? Math.round(this._currentHr) : '--') + ' bpm';
+    const band = this._panelFrame(p, hrLabel, this.colors.hr);
+
+    const T = this._hr.t, HRv = this._hr.hr;
+    // Collect the points inside the visible window.
+    const xs = [], ys = [];
+    let mn = Infinity, mx = -Infinity;
+    for (let i = 0; i < T.length; i++) {
+      if (T[i] < tStart || T[i] > tEnd) continue;
+      xs.push(xForT(T[i]));
+      ys.push(HRv[i]);
+      if (HRv[i] < mn) mn = HRv[i]; if (HRv[i] > mx) mx = HRv[i];
+    }
+    if (xs.length < 1) { this._drawBaseline(band); return; }
+
+    // Autoscale with a floor span (≥20 bpm) so a steady HR sits mid-panel
+    // instead of jittering full-scale.
+    let span = mx - mn;
+    if (span < 20) { const c = (mn + mx) / 2; mn = c - 10; mx = c + 10; }
+    else { mn -= span * 0.15; mx += span * 0.15; }
+    if (!this._hrScale) this._hrScale = { min: mn, max: mx };
+    else {
+      this._hrScale.min = ease(this._hrScale.min, mn, 0.06);
+      this._hrScale.max = ease(this._hrScale.max, mx, 0.06);
+    }
+
+    const ax = xs.length === 1 ? [xs[0], xs[0]] : xs;   // draw a dot as a nub
+    const ay = ys.length === 1 ? [ys[0], ys[0]] : ys;
+    this._strokeTrace(ax, ay, this._hrScale.min, this._hrScale.max, band, this.colors.hr, ax.length);
+  }
+
+  /* ── shared trace stroke ───────────────────────────────────────────────── */
+  // Maps values (vMin..vMax) into the panel band (y1 bottom, y0 top) and
+  // strokes a polyline. Decimates so no more than ~2 points per horizontal
+  // pixel are drawn — keeps it cheap when the buffer is dense.
+  _strokeTrace(xs, ys, vMin, vMax, band, color, count) {
+    const ctx = this.ctx;
+    const range = (vMax - vMin) || 1;
+    const y0 = band.y0, y1 = band.y1, hgt = y1 - y0;
+    const yForV = (v) => y1 - clamp((v - vMin) / range, 0, 1) * hgt;
+
+    const maxPts = Math.max(2, Math.round(this._cssW * 2));
+    const stride = count > maxPts ? Math.ceil(count / maxPts) : 1;
+
+    ctx.save();
+    ctx.beginPath();
+    let started = false;
+    for (let i = 0; i < count; i += stride) {
+      const x = xs[i], y = yForV(ys[i]);
+      if (!started) { ctx.moveTo(x, y); started = true; }
+      else ctx.lineTo(x, y);
+    }
+    // Always include the very last sample so the trace reaches the right edge.
+    if (count > 0 && (count - 1) % stride !== 0) {
+      ctx.lineTo(xs[count - 1], yForV(ys[count - 1]));
+    }
+    ctx.strokeStyle = color;
+    ctx.lineWidth = this.lineWidth;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+export default LiveCharts;
+
+)POLY_ASSET_9c1f";
+
+// polygraph_protocol.js  (14272 bytes)  -> /polygraph_protocol.js
+static const char PROTOCOL_JS[] PROGMEM = R"POLY_ASSET_9c1f(
+/* ══════════════════════════════════════════════════════════════════════════
+   polygraph_protocol.js — Comparison Question Test (CQT) exam protocol
+   ───────────────────────────────────────────────────────────────────────────
+   PURE LOGIC. No DOM, no timers, no engine calls. Deterministic.
+
+   This module turns a *sequence* of single-response scorings (produced by
+   polygraph_engine.js `scoreResponse(startMs,endMs)`) into a structured
+   multi-question exam with a per-question record and an aggregate CQT
+   determination.
+
+   ── How a CQT decides ──────────────────────────────────────────────────────
+   Each question is one of three types:
+     • 'relevant'   — the issue actually under test (e.g. "Did you take it?")
+     • 'comparison' — a probable-lie control the subject is expected to react to
+                      (e.g. "Before age 25, did you ever lie to stay out of
+                      trouble?"). Reactivity here is the yardstick.
+     • 'neutral'    — irrelevant filler (e.g. "Is today Tuesday?"). Kept for
+                      display, but IGNORED by the determination.
+
+   The determination compares physiological REACTIVITY (the engine's 0..1
+   reactivity index, higher = more sympathetic arousal) to relevant vs
+   comparison questions:
+     • markedly higher reactivity to RELEVANT than COMPARISON ⇒ "Deceptive"
+     • higher / roughly equal reactivity to COMPARISON         ⇒ "Truthful"
+     • too close, or not enough usable signal                  ⇒ "Inconclusive"
+
+   HONEST FRAMING (inherited from the engine): this measures within-subject
+   arousal, not lies. Labels are a bounded mapping of an arousal contrast,
+   surfaced with an explicit confidence.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+'use strict';
+
+/* ─── Tunable thresholds (all overridable via the Protocol opts arg) ──────── */
+
+export const DEFAULT_PROTOCOL_OPTS = {
+  // Minimum per-response signal-quality index (0..1) for a question to count
+  // toward the determination. Matches the engine's own minSQI floor so we never
+  // trust a determination the engine itself would have called Inconclusive.
+  sqiFloor: 0.45,
+
+  // Decision bands on delta = mean(relevant reactivity) − mean(comparison
+  // reactivity). delta > 0 means the subject reacted MORE to the relevant
+  // (issue-under-test) questions than to the probable-lie controls.
+  deceptiveDelta: 0.10,   // delta ≥ this ⇒ Deceptive (clear relevant-side spike)
+  truthfulDelta: -0.02,   // delta ≤ this ⇒ Truthful  (control-side ≥ relevant)
+  //  (truthfulDelta … deceptiveDelta) is the inconclusive band.
+
+  // ── Confidence shaping (see aggregate()) ──
+  // |delta| at which the "magnitude" confidence term saturates to 1.
+  confidenceDeltaScale: 0.20,
+  // usable-question count at which the "sample size" term saturates to 1
+  // (e.g. 2 relevant + 2 comparison).
+  confidenceSampleTarget: 4,
+  // Weights blending the three confidence terms; kept ≈ summing to 1.
+  confWeightDelta: 0.5,   // how decisive the relevant-vs-comparison gap is
+  confWeightSamples: 0.2, // how many usable questions backed it
+  confWeightSqi: 0.3,     // mean signal quality of those questions
+};
+
+// The only determination strings we ever emit / accept.
+const LABELS = Object.freeze(['Deceptive', 'Truthful', 'Inconclusive']);
+const QUESTION_TYPES = Object.freeze(['relevant', 'comparison', 'neutral']);
+
+/* ─── Small pure helpers ─────────────────────────────────────────────────── */
+
+// Finite-number coercion: anything non-numeric / NaN / ±Inf becomes NaN so the
+// usability check below rejects it uniformly.
+function num(x) { return (typeof x === 'number' && Number.isFinite(x)) ? x : NaN; }
+function mean(a) { return a.length ? a.reduce((s, v) => s + v, 0) / a.length : NaN; }
+function clamp(v, lo, hi) { return Math.min(Math.max(v, lo), hi); }
+function round(v, p = 3) { return Number.isFinite(v) ? +v.toFixed(p) : v; }
+
+// Normalize an incoming score result (from engine.scoreResponse) into a stored,
+// robust per-question record. Tolerates missing objects and NaN fields — any
+// gap simply makes the record unusable rather than throwing.
+function normalizeScore(score) {
+  const s = score || {};
+  const label = LABELS.includes(s.label) ? s.label : 'Inconclusive';
+  return {
+    reactivity: num(s.reactivity),
+    label,
+    confidence: num(s.confidence),
+    sqi: num(s.sqi),
+    // channels are display-only here; pass through untouched (or null).
+    channels: (s.channels && typeof s.channels === 'object') ? s.channels : null,
+    baselineReady: s.baselineReady === true,
+  };
+}
+
+/* ─── Protocol — the CQT state machine + scorer ──────────────────────────── */
+
+export class Protocol {
+  /**
+   * @param {Array<{id?, text, type:'relevant'|'comparison'|'neutral'}>} questions
+   * @param {object} [opts]  overrides for DEFAULT_PROTOCOL_OPTS
+   */
+  constructor(questions = [], opts = {}) {
+    this.opts = { ...DEFAULT_PROTOCOL_OPTS, ...(opts || {}) };
+
+    // Normalize the question list. Unknown/absent types default to 'neutral'
+    // (safe: neutral never drives a determination). Ids default to q1, q2, …
+    const list = Array.isArray(questions) ? questions : [];
+    this.questions = list.map((q, i) => ({
+      id: (q && q.id != null) ? q.id : `q${i + 1}`,
+      text: (q && q.text != null) ? String(q.text) : '',
+      type: (q && QUESTION_TYPES.includes(q.type)) ? q.type : 'neutral',
+    }));
+
+    // Parallel array of recorded responses; null until a question is answered.
+    this._records = new Array(this.questions.length).fill(null);
+
+    // Pointer to the active (not-yet-answered) question. Also == # answered so far.
+    this._index = 0;
+  }
+
+  /* ── State machine ─────────────────────────────────────────────────────── */
+
+  // The active question (a {id,text,type,index}) or null when finished/empty.
+  current() {
+    if (this._index < 0 || this._index >= this.questions.length) return null;
+    return { ...this.questions[this._index], index: this._index };
+  }
+
+  // True once every question has been passed (answered or skipped).
+  get isComplete() {
+    return this._index >= this.questions.length;
+  }
+
+  // {index, total}: index = questions completed so far == pointer position.
+  progress() {
+    return { index: Math.min(this._index, this.questions.length), total: this.questions.length };
+  }
+
+  // Attach the engine's score result to the CURRENT question and advance.
+  // No-op (returns null) if the exam is already complete. Returns the stored
+  // per-question record: {question, type, reactivity, label, confidence, sqi,
+  // channels, usable}.
+  recordResponse(scoreResult) {
+    if (this.isComplete) return null;
+    const q = this.questions[this._index];
+    const n = normalizeScore(scoreResult);
+    const record = {
+      question: { ...q },       // {id,text,type}
+      type: q.type,
+      reactivity: n.reactivity,
+      label: n.label,
+      confidence: n.confidence,
+      sqi: n.sqi,
+      channels: n.channels,
+      baselineReady: n.baselineReady,
+      // Usable for the determination? Must be a scored (relevant|comparison)
+      // question with a ready baseline, a finite reactivity, and sqi above the
+      // floor. Neutrals are intentionally never usable (display only).
+      usable: this._isUsable(q.type, n),
+    };
+    this._records[this._index] = record;
+    this._index++;
+    return record;
+  }
+
+  // Move past the current question WITHOUT recording a response (a skip).
+  // Leaves that slot's record as null. Clamped; safe to over-call.
+  advance() {
+    if (this._index < this.questions.length) this._index++;
+    return this.current();
+  }
+
+  // Wipe all responses and rewind to the first question. Question list is kept.
+  reset() {
+    this._records = new Array(this.questions.length).fill(null);
+    this._index = 0;
+  }
+
+  // Is a normalized record usable for the relevant-vs-comparison contrast?
+  _isUsable(type, n) {
+    return (type === 'relevant' || type === 'comparison')
+      && n.baselineReady === true
+      && Number.isFinite(n.reactivity)
+      && Number.isFinite(n.sqi)
+      && n.sqi >= this.opts.sqiFloor;
+  }
+
+  /* ── Aggregate CQT determination ───────────────────────────────────────── */
+
+  /**
+   * Fold everything RECORDED SO FAR into a single CQT result. Safe to call
+   * before the exam is complete — it simply aggregates the answered questions.
+   * @returns {{
+   *   determination:'Deceptive'|'Truthful'|'Inconclusive',
+   *   relevantMean:number, comparisonMean:number, delta:number,
+   *   confidence:number,
+   *   perQuestion:Array<{text,type,reactivity,label,usable}>,
+   *   reason:string,
+   *   usableQuestions:number, insufficient:boolean
+   * }}
+   */
+  aggregate() {
+    const recorded = this._records.filter(r => r !== null);
+
+    // Display list: EVERY answered question, including neutrals and unusable
+    // ones, in exam order.
+    const perQuestion = recorded.map(r => ({
+      text: r.question.text,
+      type: r.type,
+      reactivity: r.reactivity,
+      label: r.label,
+      usable: r.usable,
+    }));
+
+    // Split usable questions by role.
+    const rel = recorded.filter(r => r.usable && r.type === 'relevant');
+    const cmp = recorded.filter(r => r.usable && r.type === 'comparison');
+    const usableQuestions = rel.length + cmp.length;
+
+    const O = this.opts;
+
+    // ── Gate: a CQT needs at least one usable relevant AND one usable
+    // comparison question. Without both there is nothing to contrast. ──
+    if (rel.length === 0 || cmp.length === 0) {
+      return {
+        determination: 'Inconclusive',
+        relevantMean: rel.length ? round(mean(rel.map(r => r.reactivity))) : NaN,
+        comparisonMean: cmp.length ? round(mean(cmp.map(r => r.reactivity))) : NaN,
+        delta: NaN,
+        confidence: 0,
+        perQuestion,
+        reason: `Insufficient usable signal: need ≥1 relevant and ≥1 comparison `
+          + `question with a ready baseline and sqi ≥ ${O.sqiFloor} `
+          + `(have ${rel.length} relevant, ${cmp.length} comparison usable).`,
+        usableQuestions,
+        insufficient: true,
+      };
+    }
+
+    // ── Core contrast ──
+    const relevantMean = mean(rel.map(r => r.reactivity));
+    const comparisonMean = mean(cmp.map(r => r.reactivity));
+    const delta = relevantMean - comparisonMean;   // >0 ⇒ reacted more to the issue
+
+    // ── Banded decision ──
+    let determination;
+    if (delta >= O.deceptiveDelta) determination = 'Deceptive';
+    else if (delta <= O.truthfulDelta) determination = 'Truthful';
+    else determination = 'Inconclusive';
+
+    // ── Confidence: blend three independent, each-clamped 0..1 terms ──
+    //  1) magnitude — how far |delta| is from "no difference", saturating at
+    //     confidenceDeltaScale.
+    const deltaTerm = clamp(Math.abs(delta) / O.confidenceDeltaScale, 0, 1);
+    //  2) sample size — more usable questions ⇒ steadier means.
+    const sampleTerm = clamp(usableQuestions / O.confidenceSampleTarget, 0, 1);
+    //  3) signal quality — mean sqi of the usable questions.
+    const sqiTerm = clamp(mean([...rel, ...cmp].map(r => r.sqi)), 0, 1);
+    const confidence = clamp(
+      O.confWeightDelta * deltaTerm
+      + O.confWeightSamples * sampleTerm
+      + O.confWeightSqi * sqiTerm,
+      0, 1,
+    );
+
+    // ── Human-readable reason ──
+    const d = round(delta), rm = round(relevantMean), cm = round(comparisonMean);
+    let reason;
+    if (determination === 'Deceptive') {
+      reason = `Reactivity to relevant questions (${rm}) exceeded comparison (${cm}) `
+        + `by Δ=${d} ≥ ${O.deceptiveDelta}.`;
+    } else if (determination === 'Truthful') {
+      reason = `Reactivity to relevant (${rm}) did not exceed comparison (${cm}); `
+        + `Δ=${d} ≤ ${O.truthfulDelta}.`;
+    } else {
+      reason = `Relevant-vs-comparison difference Δ=${d} fell in the inconclusive band `
+        + `(${O.truthfulDelta} … ${O.deceptiveDelta}); no clear contrast.`;
+    }
+
+    return {
+      determination,
+      relevantMean: rm,
+      comparisonMean: cm,
+      delta: d,
+      confidence: round(confidence),
+      perQuestion,
+      reason,
+      usableQuestions,
+      insufficient: false,
+    };
+  }
+}
+
+/* ─── A sensible default question set the UI can ship with ────────────────────
+   Ordering follows standard CQT practice: an easy neutral to settle the
+   subject, then alternating comparison / relevant probes, closing on a neutral.
+   EDIT the relevant questions to the actual issue under test. ─────────────── */
+
+export const SAMPLE_QUESTIONS = Object.freeze([
+  { id: 'n1', text: 'Is today a weekday?',                                   type: 'neutral' },
+  { id: 'c1', text: 'Before this year, did you ever lie to avoid trouble?',  type: 'comparison' },
+  { id: 'r1', text: 'Did you take the missing item?',                        type: 'relevant' },
+  { id: 'n2', text: 'Are we in a testing room right now?',                   type: 'neutral' },
+  { id: 'c2', text: 'In your whole life, did you ever break a promise?',     type: 'comparison' },
+  { id: 'r2', text: 'Do you know who took the missing item?',                type: 'relevant' },
+]);
+
+export default Protocol;
+
+)POLY_ASSET_9c1f";
+
+// polygraph_history.js  (17651 bytes)  -> /polygraph_history.js
+static const char HISTORY_JS[] PROGMEM = R"POLY_ASSET_9c1f(
+/* ══════════════════════════════════════════════════════════════════════
+   polygraph_history.js — session history + export module
+
+   Self-contained, dependency-free ES module. Persists completed-exam
+   sessions per profile in localStorage, exports them as JSON/CSV, and
+   renders a styled history list into a container using the host app's
+   palette CSS variables.
+
+   Storage model
+   ─────────────
+   One list per profile, keyed `polygraph:sessions:<profileId>`, stored
+   newest-first and capped to the most recent MAX_SESSIONS. All storage
+   access is wrapped so a full/unavailable/corrupt store degrades to an
+   empty list instead of throwing at the caller.
+
+   Session record shape (flexible — future multi-question aggregates fit):
+     { id, profileId, subjectName, ts,           // epoch ms
+       determination,                             // 'Deceptive'|'Truthful'|'Inconclusive'
+       reactivity, confidence, baselineReady,
+       channels: { scrAmp:{value,z}, scl:{…}, hr:{…}, pulseAmp:{…} },
+       questions?: [{ text, type, label, reactivity }],
+       notes? }
+   ══════════════════════════════════════════════════════════════════════ */
+
+const KEY_PREFIX = 'polygraph:sessions:';
+const MAX_SESSIONS = 100;
+
+// Channel order used for CSV columns and (implicitly) any per-channel display.
+const CHANNELS = ['scrAmp', 'scl', 'hr', 'pulseAmp'];
+
+// Determination → palette variable + hard-coded fallback (for non-DOM/export
+// contexts where the CSS var is meaningless). Mirrors the app's result screen.
+const DETERMINATION_COLORS = {
+  Deceptive:    { var: 'var(--z-hot)',      hex: '#c15b4e' },
+  Truthful:     { var: 'var(--green-deep)', hex: '#6fae8b' },
+  Inconclusive: { var: 'var(--amber)',      hex: '#ea9b4e' },
+};
+
+/* ── environment guards ─────────────────────────────────────────────── */
+
+function getStore() {
+  try {
+    const ls = (typeof globalThis !== 'undefined' && globalThis.localStorage) || null;
+    // Touch it so a SecurityError (private mode / disabled storage) is caught here.
+    if (ls && typeof ls.getItem === 'function') return ls;
+  } catch (_) { /* fall through */ }
+  return null;
+}
+
+function keyFor(profileId) {
+  return KEY_PREFIX + String(profileId == null ? '' : profileId);
+}
+
+/* ── low-level read/write (never throw) ─────────────────────────────── */
+
+// Read + sanitise the list for a profile. Corrupt JSON → []; individual
+// non-object entries are skipped rather than poisoning the whole list.
+function readList(profileId) {
+  const store = getStore();
+  if (!store) return [];
+  let raw;
+  try { raw = store.getItem(keyFor(profileId)); }
+  catch (_) { return []; }
+  if (!raw) return [];
+  let parsed;
+  try { parsed = JSON.parse(raw); }
+  catch (_) { return []; }              // corrupt — treat as empty
+  if (!Array.isArray(parsed)) return [];
+  const out = [];
+  for (const item of parsed) {
+    if (item && typeof item === 'object') out.push(item);
+  }
+  return out;
+}
+
+// Persist a list. Returns true on success, false if storage is unavailable
+// or rejects (e.g. quota). Never throws.
+function writeList(profileId, list) {
+  const store = getStore();
+  if (!store) return false;
+  try {
+    store.setItem(keyFor(profileId), JSON.stringify(list));
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+/* ── id + normalisation ─────────────────────────────────────────────── */
+
+function makeId() {
+  const rnd = Math.random().toString(36).slice(2, 8);
+  return 's' + Date.now().toString(36) + rnd;
+}
+
+// Normalise a caller-supplied session (which may be a raw engine result plus
+// context, or an already-shaped record) into the stored record shape. Tolerant
+// of missing fields; accepts either `determination` or the engine's `label`.
+function normalize(profileId, session) {
+  const s = (session && typeof session === 'object') ? session : {};
+  const rec = {
+    id: s.id != null ? String(s.id) : makeId(),
+    profileId: profileId != null ? String(profileId) : (s.profileId != null ? String(s.profileId) : ''),
+    subjectName: typeof s.subjectName === 'string' ? s.subjectName : (typeof s.subject === 'string' ? s.subject : ''),
+    ts: Number.isFinite(s.ts) ? s.ts : Date.now(),
+    determination: s.determination || s.label || 'Inconclusive',
+    reactivity: Number.isFinite(s.reactivity) ? s.reactivity : null,
+    confidence: Number.isFinite(s.confidence) ? s.confidence : null,
+    baselineReady: s.baselineReady === undefined ? null : !!s.baselineReady,
+    channels: (s.channels && typeof s.channels === 'object') ? s.channels : {},
+  };
+  if (Array.isArray(s.questions)) rec.questions = s.questions;
+  if (s.notes != null) rec.notes = s.notes;
+  return rec;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   PUBLIC — storage CRUD
+   ══════════════════════════════════════════════════════════════════════ */
+
+// Append a completed session for a profile. Assigns id + ts if absent,
+// stores newest-first, caps to MAX_SESSIONS. Returns the stored record
+// (even if persistence failed, so the caller can still use it in-memory).
+export function saveSession(profileId, session) {
+  const rec = normalize(profileId, session);
+  const list = readList(profileId);
+  // De-dupe by id (idempotent re-save / replace).
+  const filtered = list.filter(x => x && x.id !== rec.id);
+  filtered.unshift(rec);                       // newest first
+  if (filtered.length > MAX_SESSIONS) filtered.length = MAX_SESSIONS;
+  writeList(profileId, filtered);
+  return rec;
+}
+
+// All sessions for a profile, newest first.
+export function listSessions(profileId) {
+  return readList(profileId);
+}
+
+// One session by id, or null.
+export function getSession(profileId, id) {
+  const target = String(id);
+  const found = readList(profileId).find(x => x && String(x.id) === target);
+  return found || null;
+}
+
+// Remove one session by id. Returns true if something was removed.
+export function deleteSession(profileId, id) {
+  const target = String(id);
+  const list = readList(profileId);
+  const next = list.filter(x => x && String(x.id) !== target);
+  if (next.length === list.length) return false;
+  writeList(profileId, next);
+  return true;
+}
+
+// Drop all sessions for a profile.
+export function clearSessions(profileId) {
+  const store = getStore();
+  if (!store) return false;
+  try { store.removeItem(keyFor(profileId)); return true; }
+  catch (_) { return false; }
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   PUBLIC — export helpers
+   ══════════════════════════════════════════════════════════════════════ */
+
+// Pretty-printed JSON for a single session.
+export function exportSessionJSON(session) {
+  try { return JSON.stringify(session, null, 2); }
+  catch (_) { return '{}'; }
+}
+
+function csvCell(v) {
+  if (v == null) return '';
+  const s = String(v);
+  // Quote if it contains a comma, quote, or newline; double interior quotes.
+  return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+function pct(x) {
+  return Number.isFinite(x) ? Math.round(x * 100) + '%' : '';
+}
+
+function isoTs(ts) {
+  if (!Number.isFinite(ts)) return '';
+  try { return new Date(ts).toISOString(); }
+  catch (_) { return ''; }
+}
+
+function channelZ(session, ch) {
+  const c = session && session.channels && session.channels[ch];
+  const z = c && typeof c === 'object' ? c.z : undefined;
+  return Number.isFinite(z) ? z : '';
+}
+
+// CSV over a list of sessions — one row per session. Header + per-channel z.
+export function exportSessionCSV(sessions) {
+  const rows = Array.isArray(sessions) ? sessions : (sessions ? [sessions] : []);
+  const header = ['timestamp', 'subject', 'determination', 'reactivity%', 'confidence%',
+    ...CHANNELS.map(c => c + '_z')];
+  const lines = [header.map(csvCell).join(',')];
+  for (const s of rows) {
+    if (!s || typeof s !== 'object') continue;
+    const cells = [
+      isoTs(s.ts),
+      s.subjectName || '',
+      s.determination || s.label || '',
+      pct(s.reactivity),
+      pct(s.confidence),
+      ...CHANNELS.map(c => channelZ(s, c)),
+    ];
+    lines.push(cells.map(csvCell).join(','));
+  }
+  return lines.join('\r\n');
+}
+
+// Trigger a browser download of text via a Blob + temporary <a>. No-op-safe
+// (returns false) when not in a browser / Blob or URL unavailable.
+export function downloadText(filename, text, mime) {
+  try {
+    if (typeof document === 'undefined' || typeof Blob === 'undefined') return false;
+    const URLc = (typeof URL !== 'undefined' && URL) ||
+      (typeof globalThis !== 'undefined' && globalThis.webkitURL) || null;
+    if (!URLc || !URLc.createObjectURL) return false;
+    const blob = new Blob([text == null ? '' : String(text)],
+      { type: mime || 'text/plain;charset=utf-8' });
+    const url = URLc.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename || 'download.txt';
+    a.style.display = 'none';
+    (document.body || document.documentElement).appendChild(a);
+    a.click();
+    a.remove();
+    // Revoke on the next tick so the download has committed.
+    setTimeout(() => { try { URLc.revokeObjectURL(url); } catch (_) {} }, 0);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   PUBLIC — DOM rendering
+   ══════════════════════════════════════════════════════════════════════ */
+
+const STYLE_ID = 'polygraph-history-styles';
+
+// One scoped stylesheet, injected once. Uses the app's palette variables so
+// it inherits light/theme colours; falls back to sensible neutrals.
+function ensureStyles() {
+  if (typeof document === 'undefined') return;
+  if (document.getElementById(STYLE_ID)) return;
+  const css = `
+.pgh-wrap { display:flex; flex-direction:column; gap:.55rem; font: inherit; color: var(--text, #6b5b52); }
+.pgh-head { display:flex; align-items:center; justify-content:space-between; gap:.75rem; margin-bottom:.15rem; }
+.pgh-title { font-size:.8rem; letter-spacing:.04em; text-transform:uppercase; color: var(--text-muted, #a89a8c); }
+.pgh-csv { appearance:none; border:1px solid var(--border-soft, #f2e9dd); background: var(--surface, #fff);
+  color: var(--accent-deep, #c9a99a); font:inherit; font-size:.8rem; padding:.32rem .7rem; border-radius:.5rem;
+  cursor:pointer; transition:color .15s, border-color .15s; }
+.pgh-csv:hover { color: var(--text, #6b5b52); border-color: var(--accent-deep, #c9a99a); }
+.pgh-list { display:flex; flex-direction:column; gap:.4rem; list-style:none; margin:0; padding:0; }
+.pgh-row { display:flex; align-items:center; gap:.7rem; padding:.6rem .75rem; border-radius:.6rem;
+  background: var(--surface, #fff); border:1px solid var(--border-soft, #f2e9dd); cursor:pointer;
+  transition:border-color .15s, transform .05s; }
+.pgh-row:hover { border-color: var(--accent-deep, #c9a99a); }
+.pgh-row:active { transform: translateY(1px); }
+.pgh-date { font-size:.85rem; color: var(--text, #6b5b52); min-width:8.5rem; }
+.pgh-badge { font-size:.72rem; font-weight:600; letter-spacing:.02em; padding:.18rem .55rem; border-radius:1rem;
+  color:#fff; white-space:nowrap; }
+.pgh-react { margin-left:auto; font-size:.82rem; color: var(--text-muted, #a89a8c); font-variant-numeric:tabular-nums; }
+.pgh-del { appearance:none; border:none; background:transparent; color: var(--text-muted, #a89a8c);
+  font:inherit; font-size:1rem; line-height:1; padding:.1rem .3rem; cursor:pointer; border-radius:.35rem; }
+.pgh-del:hover { color: var(--z-hot, #c15b4e); }
+.pgh-empty { padding:1.4rem .75rem; text-align:center; color: var(--text-muted, #a89a8c); font-size:.9rem;
+  border:1px dashed var(--border-soft, #f2e9dd); border-radius:.6rem; background: var(--surface, #fff); }
+`;
+  const el = document.createElement('style');
+  el.id = STYLE_ID;
+  el.textContent = css;
+  (document.head || document.documentElement).appendChild(el);
+}
+
+function fmtDate(ts) {
+  if (!Number.isFinite(ts)) return '—';
+  const d = new Date(ts);
+  try {
+    return d.toLocaleString(undefined,
+      { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  } catch (_) {
+    return d.toISOString();
+  }
+}
+
+// Render the session history for a profile into containerEl. Callbacks are all
+// optional:
+//   onOpen(session)          — a row was clicked
+//   onExport(sessions,'csv') — the "Export CSV (all)" affordance; if omitted,
+//                              the component downloads the CSV itself
+//   onDelete(session)        — a row's delete control; if omitted, the component
+//                              deletes from storage itself. Either way the list
+//                              re-renders from storage afterwards.
+// Never throws; a null/absent container is a safe no-op.
+export function renderHistoryInto(containerEl, profileId, opts) {
+  if (typeof document === 'undefined' || !containerEl) return;
+  const o = opts || {};
+  try {
+    ensureStyles();
+    const sessions = listSessions(profileId);
+
+    // Clear.
+    while (containerEl.firstChild) containerEl.removeChild(containerEl.firstChild);
+
+    const wrap = document.createElement('div');
+    wrap.className = 'pgh-wrap';
+
+    const head = document.createElement('div');
+    head.className = 'pgh-head';
+    const title = document.createElement('span');
+    title.className = 'pgh-title';
+    title.textContent = 'Session history';
+    head.appendChild(title);
+
+    if (sessions.length) {
+      const csvBtn = document.createElement('button');
+      csvBtn.type = 'button';
+      csvBtn.className = 'pgh-csv';
+      csvBtn.textContent = 'Export CSV (all)';
+      csvBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (typeof o.onExport === 'function') {
+          o.onExport(sessions, 'csv');
+        } else {
+          const name = 'polygraph-sessions-' + String(profileId == null ? '' : profileId) + '.csv';
+          downloadText(name, exportSessionCSV(sessions), 'text/csv;charset=utf-8');
+        }
+      });
+      head.appendChild(csvBtn);
+    }
+    wrap.appendChild(head);
+
+    if (!sessions.length) {
+      const empty = document.createElement('div');
+      empty.className = 'pgh-empty';
+      empty.textContent = 'No past sessions yet.';
+      wrap.appendChild(empty);
+      containerEl.appendChild(wrap);
+      return;
+    }
+
+    const list = document.createElement('ul');
+    list.className = 'pgh-list';
+
+    for (const s of sessions) {
+      const row = document.createElement('li');
+      row.className = 'pgh-row';
+      row.setAttribute('data-session-id', String(s.id));
+
+      const date = document.createElement('span');
+      date.className = 'pgh-date';
+      date.textContent = fmtDate(s.ts);
+      row.appendChild(date);
+
+      const det = s.determination || 'Inconclusive';
+      const badge = document.createElement('span');
+      badge.className = 'pgh-badge';
+      const color = DETERMINATION_COLORS[det] || DETERMINATION_COLORS.Inconclusive;
+      badge.style.background = color.var;
+      badge.textContent = det;
+      row.appendChild(badge);
+
+      const react = document.createElement('span');
+      react.className = 'pgh-react';
+      react.textContent = Number.isFinite(s.reactivity) ? (Math.round(s.reactivity * 100) + '%') : '—';
+      row.appendChild(react);
+
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'pgh-del';
+      del.setAttribute('aria-label', 'Delete session');
+      del.textContent = '×';
+      del.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (typeof o.onDelete === 'function') o.onDelete(s);
+        else deleteSession(profileId, s.id);
+        renderHistoryInto(containerEl, profileId, opts);   // reflect fresh storage
+      });
+      row.appendChild(del);
+
+      row.addEventListener('click', () => {
+        if (typeof o.onOpen === 'function') o.onOpen(s);
+      });
+
+      list.appendChild(row);
+    }
+
+    wrap.appendChild(list);
+    containerEl.appendChild(wrap);
+  } catch (_) {
+    // Rendering must never throw to the caller.
+  }
+}
+
+/* Optional convenience: everything under one namespace too. */
+export default {
+  saveSession, listSessions, getSession, deleteSession, clearSessions,
+  exportSessionJSON, exportSessionCSV, downloadText, renderHistoryInto,
+};
+
+)POLY_ASSET_9c1f";
+
 // Register all asset routes on an AsyncWebServer instance.
 #define REGISTER_WEB_ASSETS(server) do { \
   (server).on("/", HTTP_GET, [](AsyncWebServerRequest* r){ r->send_P(200, "text/html; charset=utf-8", APP_HTML); }); \
   (server).on("/polygraph_engine.js", HTTP_GET, [](AsyncWebServerRequest* r){ r->send_P(200, "text/javascript; charset=utf-8", ENGINE_JS); }); \
   (server).on("/polygraph_source.js", HTTP_GET, [](AsyncWebServerRequest* r){ r->send_P(200, "text/javascript; charset=utf-8", SOURCE_JS); }); \
   (server).on("/polygraph_synth.js", HTTP_GET, [](AsyncWebServerRequest* r){ r->send_P(200, "text/javascript; charset=utf-8", SYNTH_JS); }); \
+  (server).on("/polygraph_charts.js", HTTP_GET, [](AsyncWebServerRequest* r){ r->send_P(200, "text/javascript; charset=utf-8", CHARTS_JS); }); \
+  (server).on("/polygraph_protocol.js", HTTP_GET, [](AsyncWebServerRequest* r){ r->send_P(200, "text/javascript; charset=utf-8", PROTOCOL_JS); }); \
+  (server).on("/polygraph_history.js", HTTP_GET, [](AsyncWebServerRequest* r){ r->send_P(200, "text/javascript; charset=utf-8", HISTORY_JS); }); \
 } while (0)

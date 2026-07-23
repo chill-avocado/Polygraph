@@ -16,10 +16,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DELIM = "POLY_ASSET_9c1f"           # raw-string delimiter; must not appear as )DELIM" in any file
 ASSETS = [
     # (source file, C symbol, HTTP route, content-type)
-    ("polygraph_app.html",    "APP_HTML",  "/",                     "text/html; charset=utf-8"),
-    ("polygraph_engine.js",   "ENGINE_JS", "/polygraph_engine.js",  "text/javascript; charset=utf-8"),
-    ("polygraph_source.js",   "SOURCE_JS", "/polygraph_source.js",  "text/javascript; charset=utf-8"),
-    ("polygraph_synth.js",    "SYNTH_JS",  "/polygraph_synth.js",   "text/javascript; charset=utf-8"),
+    ("polygraph_app.html",      "APP_HTML",     "/",                      "text/html; charset=utf-8"),
+    ("polygraph_engine.js",     "ENGINE_JS",    "/polygraph_engine.js",   "text/javascript; charset=utf-8"),
+    ("polygraph_source.js",     "SOURCE_JS",    "/polygraph_source.js",   "text/javascript; charset=utf-8"),
+    ("polygraph_synth.js",      "SYNTH_JS",     "/polygraph_synth.js",    "text/javascript; charset=utf-8"),
+    ("polygraph_charts.js",     "CHARTS_JS",    "/polygraph_charts.js",   "text/javascript; charset=utf-8"),
+    ("polygraph_protocol.js",   "PROTOCOL_JS",  "/polygraph_protocol.js", "text/javascript; charset=utf-8"),
+    ("polygraph_history.js",    "HISTORY_JS",   "/polygraph_history.js",  "text/javascript; charset=utf-8"),
 ]
 
 def main():

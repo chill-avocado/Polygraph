@@ -69,6 +69,9 @@ static const char*   FW_VERSION = "biomonitor-1";   // reported by GET /status
 static const char*   AP_SSID    = "BioMonitor";
 static const char*   AP_PASS    = "sensor123";
 static const uint8_t AP_CHANNEL = 6;
+// GPIO34: confirmed by the [ADC] boot probe as the pin carrying the GSR
+// signal (34 reads live, VP/36 and VN/39 read a hard zero). Input-only and on
+// ADC1, which is required -- ADC2 cannot be read while WiFi is active.
 static const gpio_num_t GSR_PIN = GPIO_NUM_34;
 static const uint32_t PERIOD_MS = 10;   // 100 Hz target
 
@@ -166,14 +169,52 @@ void setup() {
     analogReadResolution(12);
     analogSetAttenuation(ADC_11db);
 
+    // Report every ADC1 pin the GSR could plausibly be on, so the live one is
+    // obvious rather than guessed. 34 = "34", 36 = "VP", 39 = "VN".
+    {
+        const gpio_num_t cand[] = {GPIO_NUM_34, GPIO_NUM_35, GPIO_NUM_36, GPIO_NUM_39};
+        const char*      name[] = {"34", "35", "VP/36", "VN/39"};
+        Serial.print("[ADC]   ");
+        for (uint8_t i = 0; i < 4; i++) {
+            uint32_t acc = 0;
+            for (uint8_t n = 0; n < 16; n++) acc += analogRead(cand[i]);
+            Serial.printf("%s=%-4u ", name[i], (unsigned)(acc / 16));
+        }
+        Serial.printf(" (GSR configured on GPIO%d)\n", (int)GSR_PIN);
+    }
+
     // MAX30105
     Wire.begin(21, 22);
+
+    // Bus scan before probing the sensor. Distinguishes "nothing on the bus at
+    // all" (wiring/power) from "something responds but isn't the expected part"
+    // (wrong module or address) -- otherwise a failed begin() is ambiguous.
+    {
+        uint8_t found = 0;
+        Serial.print("[I2C]   scanning SDA=21 SCL=22 ...");
+        for (uint8_t addr = 1; addr < 127; addr++) {
+            Wire.beginTransmission(addr);
+            if (Wire.endTransmission() == 0) {
+                Serial.printf(" 0x%02X", addr);
+                found++;
+            }
+        }
+        if (found == 0) Serial.print(" none");
+        Serial.printf("  (%u device%s)\n", found, found == 1 ? "" : "s");
+        Serial.println("[I2C]   MAX3010x is expected at 0x57");
+    }
+
     if (sensor.begin(Wire, I2C_SPEED_FAST)) {
+        // sampleRate is deliberately 2x the 100 Hz polling cadence. The library's
+        // getIR()/getRed() call safeCheck(), which BLOCKS until a fresh FIFO
+        // sample exists; running the sensor at exactly the poll rate meant any
+        // jitter left nothing ready, stalling the loop and halving the effective
+        // stream rate to ~50 Hz. Extra headroom keeps a sample always waiting.
         sensor.setup(
             /*powerLevel*/   60,
             /*sampleAverage*/1,
             /*ledMode*/      2,      // IR + Red
-            /*sampleRate*/   100,
+            /*sampleRate*/   200,
             /*pulseWidth*/   411,
             /*adcRange*/     16384
         );
